@@ -1,0 +1,511 @@
+/**
+ * Layer Konva 2D per i mobili:
+ * - Disegno planimetrico riconoscibile per ogni categoria/tipologia
+ * - Drag & drop con snap griglia e snap muri
+ * - Maniglia grafica di rotazione sull'elemento selezionato
+ * - Avviso visivo rosso in caso di sovrapposizione con altro mobile o blocco porta
+ * - Supporto selezione multipla
+ */
+import React from 'react';
+import { Circle, Group, Line, Rect, Text } from 'react-konva';
+import type { Furniture, Point2D } from '../types/project';
+import { metersToWorld, pointMetersToWorld } from '../utils/scale';
+
+interface FurnitureLayerProps {
+  furniture: Furniture[];
+  selectedIds: string[];
+  conflicts: Record<string, string>;
+  interactive: boolean;
+  isDark: boolean;
+  onSelect: (id: string, multi: boolean) => void;
+  onDragStart: () => void;
+  onDragMove: (item: Furniture, newCenterMeters: Point2D) => void;
+  onDragEnd: () => void;
+  onRotateStart: () => void;
+  onRotateMove: (id: string, newRotationDeg: number) => void;
+  onRotateEnd: () => void;
+}
+
+/** Disegna dettagli planimetrici 2D specifici per ciascun tipo di mobile */
+const FurniturePlanDetail: React.FC<{
+  item: Furniture;
+  w: number;
+  d: number;
+  stroke: string;
+}> = ({ item, w, d, stroke }) => {
+  const hw = w / 2;
+  const hd = d / 2;
+  const t = item.geometryType;
+
+  if (t === 'sofa_2' || t === 'sofa_3' || t === 'armchair') {
+    const backD = Math.min(d * 0.25, 22);
+    const armW = Math.min(w * 0.14, 16);
+    const cushions = t === 'sofa_3' ? 3 : t === 'sofa_2' ? 2 : 1;
+    const seatW = (w - armW * 2) / cushions;
+    return (
+      <>
+        {/* Schienale */}
+        <Rect x={-hw} y={-hd} width={w} height={backD} fill="rgba(0,0,0,0.14)" stroke={stroke} strokeWidth={1} />
+        {/* Braccioli */}
+        <Rect x={-hw} y={-hd + backD} width={armW} height={d - backD} fill="rgba(0,0,0,0.10)" stroke={stroke} strokeWidth={1} />
+        <Rect x={hw - armW} y={-hd + backD} width={armW} height={d - backD} fill="rgba(0,0,0,0.10)" stroke={stroke} strokeWidth={1} />
+        {/* Divisione cuscini */}
+        {Array.from({ length: cushions - 1 }).map((_, idx) => {
+          const lx = -hw + armW + seatW * (idx + 1);
+          return (
+            <Line
+              key={idx}
+              points={[lx, -hd + backD, lx, hd]}
+              stroke={stroke}
+              strokeWidth={1}
+              opacity={0.65}
+            />
+          );
+        })}
+      </>
+    );
+  }
+
+  if (t === 'bed_single' || t === 'bed_double') {
+    const pillows = t === 'bed_double' ? 2 : 1;
+    const pillowW = (w - 14) / pillows - 4;
+    const pillowH = Math.min(d * 0.2, 34);
+    return (
+      <>
+        {/* Testata */}
+        <Rect x={-hw} y={-hd} width={w} height={8} fill="rgba(0,0,0,0.22)" />
+        {/* Cuscini */}
+        {Array.from({ length: pillows }).map((_, i) => (
+          <Rect
+            key={i}
+            x={-hw + 7 + i * (pillowW + 6)}
+            y={-hd + 12}
+            width={Math.max(8, pillowW)}
+            height={pillowH}
+            cornerRadius={4}
+            fill="#ffffff"
+            opacity={0.85}
+            stroke={stroke}
+            strokeWidth={1}
+          />
+        ))}
+        {/* Piumone */}
+        <Line points={[-hw, -hd + pillowH + 22, hw, -hd + pillowH + 22]} stroke={stroke} strokeWidth={1.2} />
+      </>
+    );
+  }
+
+  if (t === 'kitchen_linear') {
+    const sinkW = Math.min(w * 0.24, 52);
+    const hobW = Math.min(w * 0.24, 52);
+    return (
+      <>
+        {/* Lavello */}
+        <Rect x={-hw + 12} y={-hd + 8} width={sinkW} height={d - 16} cornerRadius={3} stroke={stroke} strokeWidth={1.2} fill="rgba(255,255,255,0.45)" />
+        {/* Piano cottura con 4 fuochi */}
+        <Rect x={hw - hobW - 14} y={-hd + 8} width={hobW} height={d - 16} cornerRadius={2} stroke={stroke} strokeWidth={1.2} fill="rgba(15,23,42,0.18)" />
+        {[0.3, 0.7].map((fx, i) =>
+          [0.32, 0.68].map((fy, j) => (
+            <Circle
+              key={`${i}_${j}`}
+              x={hw - hobW - 14 + hobW * fx}
+              y={-hd + 8 + (d - 16) * fy}
+              radius={5}
+              stroke={stroke}
+              strokeWidth={1}
+            />
+          ))
+        )}
+      </>
+    );
+  }
+
+  if (t === 'wc') {
+    return (
+      <>
+        <Rect x={-hw + 2} y={-hd + 2} width={w - 4} height={d * 0.3} cornerRadius={2} stroke={stroke} strokeWidth={1} fill="rgba(0,0,0,0.06)" />
+        <Circle x={0} y={d * 0.14} radius={Math.min(w, d) * 0.34} stroke={stroke} strokeWidth={1.2} fill="#ffffff" />
+      </>
+    );
+  }
+
+  if (t === 'sink') {
+    return (
+      <Rect
+        x={-hw + 8}
+        y={-hd + 8}
+        width={Math.max(8, w - 16)}
+        height={Math.max(8, d - 16)}
+        cornerRadius={8}
+        stroke={stroke}
+        strokeWidth={1.2}
+        fill="rgba(255,255,255,0.6)"
+      />
+    );
+  }
+
+  if (t === 'shower') {
+    return (
+      <>
+        <Line points={[-hw + 4, -hd + 4, hw - 4, hd - 4]} stroke={stroke} strokeWidth={1} opacity={0.5} />
+        <Line points={[hw - 4, -hd + 4, -hw + 4, hd - 4]} stroke={stroke} strokeWidth={1} opacity={0.5} />
+        <Circle x={0} y={0} radius={5} stroke={stroke} strokeWidth={1.2} />
+      </>
+    );
+  }
+
+  if (t === 'bathtub') {
+    return (
+      <Rect
+        x={-hw + 8}
+        y={-hd + 8}
+        width={Math.max(10, w - 16)}
+        height={Math.max(10, d - 16)}
+        cornerRadius={16}
+        stroke={stroke}
+        strokeWidth={1.3}
+        fill="rgba(255,255,255,0.5)"
+      />
+    );
+  }
+
+  if (t === 'plant') {
+    return (
+      <Circle
+        x={0}
+        y={0}
+        radius={Math.min(hw, hd) * 0.85}
+        fill="#3f7d52"
+        stroke="#22543d"
+        strokeWidth={1.5}
+      />
+    );
+  }
+
+  if (t === 'tv_stand') {
+    return (
+      <Rect
+        x={-hw + 14}
+        y={-4}
+        width={Math.max(12, w - 28)}
+        height={8}
+        cornerRadius={2}
+        fill="#0f172a"
+      />
+    );
+  }
+
+  if (t === 'stairs_straight') {
+    const steps = 11;
+    return (
+      <>
+        {Array.from({ length: steps }).map((_, i) => {
+          const sy = -hd + ((i + 1) / (steps + 1)) * d;
+          return (
+            <Line
+              key={i}
+              points={[-hw, sy, hw, sy]}
+              stroke={stroke}
+              strokeWidth={1}
+              opacity={0.7}
+            />
+          );
+        })}
+        {/* Freccia direzione salita */}
+        <Line points={[0, hd - 10, 0, -hd + 10]} stroke={stroke} strokeWidth={1.6} />
+        <Line points={[-6, -hd + 18, 0, -hd + 10, 6, -hd + 18]} stroke={stroke} strokeWidth={1.6} />
+      </>
+    );
+  }
+
+  if (t === 'stairs_l') {
+    const landingW = w * 0.48;
+    const landingH = d * 0.42;
+    return (
+      <>
+        {/* Pianerottolo in alto a sinistra */}
+        <Rect
+          x={-hw}
+          y={-hd}
+          width={landingW}
+          height={landingH}
+          fill="rgba(255,255,255,0.28)"
+          stroke={stroke}
+          strokeWidth={1.2}
+        />
+        {/* Gradini rampa verticale sinistra */}
+        {Array.from({ length: 6 }).map((_, i) => {
+          const sy = -hd + landingH + ((i + 1) / 7) * (d - landingH);
+          return (
+            <Line
+              key={`v_${i}`}
+              points={[-hw, sy, -hw + landingW, sy]}
+              stroke={stroke}
+              strokeWidth={1}
+              opacity={0.75}
+            />
+          );
+        })}
+        {/* Gradini rampa orizzontale destra */}
+        {Array.from({ length: 5 }).map((_, i) => {
+          const sx = -hw + landingW + ((i + 1) / 6) * (w - landingW);
+          return (
+            <Line
+              key={`h_${i}`}
+              points={[sx, -hd, sx, -hd + landingH]}
+              stroke={stroke}
+              strokeWidth={1}
+              opacity={0.75}
+            />
+          );
+        })}
+        {/* Freccia ad L */}
+        <Line
+          points={[
+            -hw + landingW / 2,
+            hd - 8,
+            -hw + landingW / 2,
+            -hd + landingH / 2,
+            hw - 8,
+            -hd + landingH / 2,
+          ]}
+          stroke={stroke}
+          strokeWidth={1.5}
+        />
+      </>
+    );
+  }
+
+  if (t === 'stairs_u') {
+    const landingH = d * 0.34;
+    const flightW = w * 0.46;
+    return (
+      <>
+        {/* Pianerottolo superiore */}
+        <Rect
+          x={-hw}
+          y={-hd}
+          width={w}
+          height={landingH}
+          fill="rgba(255,255,255,0.28)"
+          stroke={stroke}
+          strokeWidth={1.2}
+        />
+        {/* Divisorio centrale / tromba scale */}
+        <Rect
+          x={-w * 0.04}
+          y={-hd + landingH}
+          width={w * 0.08}
+          height={d - landingH}
+          fill="rgba(0,0,0,0.16)"
+          stroke={stroke}
+          strokeWidth={1}
+        />
+        {/* Gradini rampa sinistra e destra */}
+        {Array.from({ length: 7 }).map((_, i) => {
+          const sy = -hd + landingH + ((i + 1) / 8) * (d - landingH);
+          return (
+            <React.Fragment key={i}>
+              <Line points={[-hw, sy, -hw + flightW, sy]} stroke={stroke} strokeWidth={1} opacity={0.75} />
+              <Line points={[hw - flightW, sy, hw, sy]} stroke={stroke} strokeWidth={1} opacity={0.75} />
+            </React.Fragment>
+          );
+        })}
+        {/* Freccia a U */}
+        <Line
+          points={[
+            -hw + flightW / 2,
+            hd - 8,
+            -hw + flightW / 2,
+            -hd + landingH / 2,
+            hw - flightW / 2,
+            -hd + landingH / 2,
+            hw - flightW / 2,
+            hd - 8,
+          ]}
+          stroke={stroke}
+          strokeWidth={1.5}
+        />
+      </>
+    );
+  }
+
+  return null;
+};
+
+export const FurnitureLayer: React.FC<FurnitureLayerProps> = ({
+  furniture,
+  selectedIds,
+  conflicts,
+  interactive,
+  isDark,
+  onSelect,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
+  onRotateStart,
+  onRotateMove,
+  onRotateEnd,
+}) => {
+  const selectedSet = new Set(selectedIds);
+
+  return (
+    <Group>
+      {furniture.map((item) => {
+        const pos = pointMetersToWorld({ x: item.x, y: item.y });
+        const w = Math.max(16, metersToWorld(item.width));
+        const d = Math.max(16, metersToWorld(item.depth));
+        const isSelected = selectedSet.has(item.id);
+        const conflictReason = conflicts[item.id];
+        const hasConflict = Boolean(conflictReason);
+
+        const strokeColor = hasConflict
+          ? '#dc2626'
+          : isSelected
+            ? '#2563eb'
+            : isDark
+              ? '#475569'
+              : '#334155';
+
+        const handleOffsetY = -d / 2 - 24;
+
+        return (
+          <Group
+            key={item.id}
+            x={pos.x}
+            y={pos.y}
+            rotation={item.rotation}
+            draggable={interactive}
+            listening={interactive}
+            onClick={(e) => {
+              if (!interactive) return;
+              e.cancelBubble = true;
+              onSelect(item.id, Boolean(e.evt.shiftKey));
+            }}
+            onTap={(e) => {
+              if (!interactive) return;
+              e.cancelBubble = true;
+              onSelect(item.id, false);
+            }}
+            onDragStart={(e) => {
+              e.cancelBubble = true;
+              if (!isSelected) {
+                onSelect(item.id, false);
+              }
+              onDragStart();
+            }}
+            onDragMove={(e) => {
+              e.cancelBubble = true;
+              const node = e.target;
+              onDragMove(item, { x: node.x() / 100, y: node.y() / 100 });
+            }}
+            onDragEnd={(e) => {
+              e.cancelBubble = true;
+              onDragEnd();
+            }}
+          >
+            {/* Ombra morbida sotto il mobile */}
+            <Rect
+              x={-w / 2 + 2}
+              y={-d / 2 + 3}
+              width={w}
+              height={d}
+              cornerRadius={item.geometryType === 'plant' ? Math.min(w, d) / 2 : 4}
+              fill="rgba(15, 23, 42, 0.14)"
+              listening={false}
+            />
+
+            {/* Sagoma base */}
+            <Rect
+              x={-w / 2}
+              y={-d / 2}
+              width={w}
+              height={d}
+              cornerRadius={item.geometryType === 'plant' ? Math.min(w, d) / 2 : 4}
+              fill={hasConflict ? 'rgba(239, 68, 68, 0.28)' : item.color}
+              opacity={hasConflict ? 1 : 0.88}
+              stroke={strokeColor}
+              strokeWidth={hasConflict || isSelected ? 2.5 : 1.3}
+            />
+
+            {/* Dettaglio architettonico */}
+            <FurniturePlanDetail item={item} w={w} d={d} stroke={strokeColor} />
+
+            {/* Indicatore lato frontale */}
+            <Line
+              points={[-Math.min(10, w * 0.2), d / 2 - 3, Math.min(10, w * 0.2), d / 2 - 3]}
+              stroke={strokeColor}
+              strokeWidth={1.5}
+              opacity={0.5}
+              listening={false}
+            />
+
+            {/* Etichetta nome mobile */}
+            <Text
+              x={-w / 2 + 2}
+              y={-7}
+              width={Math.max(12, w - 4)}
+              align="center"
+              text={item.name}
+              fontSize={Math.max(9, Math.min(11, w / 9))}
+              fontStyle="600"
+              fill={hasConflict ? '#991b1b' : '#0f172a'}
+              listening={false}
+              ellipsis
+            />
+
+            {/* Maniglia di rotazione quando è selezionato singolarmente */}
+            {interactive && isSelected && selectedIds.length === 1 && (
+              <Group>
+                <Line
+                  points={[0, -d / 2, 0, handleOffsetY + 6]}
+                  stroke="#2563eb"
+                  strokeWidth={1.5}
+                  listening={false}
+                />
+                <Circle
+                  x={0}
+                  y={handleOffsetY}
+                  radius={7}
+                  fill="#ffffff"
+                  stroke="#2563eb"
+                  strokeWidth={2.5}
+                  draggable
+                  onDragStart={(e) => {
+                    e.cancelBubble = true;
+                    onRotateStart();
+                  }}
+                  onDragMove={(e) => {
+                    e.cancelBubble = true;
+                    const stage = e.target.getStage();
+                    const layer = e.target.getLayer();
+                    if (!stage || !layer) return;
+                    const transform = layer.getAbsoluteTransform().copy().invert();
+                    const pointer = stage.getPointerPosition();
+                    if (!pointer) return;
+                    const worldPt = transform.point(pointer);
+                    const angleRad = Math.atan2(worldPt.y - pos.y, worldPt.x - pos.x);
+                    // La maniglia si trova a -90° rispetto a +X
+                    let deg = (angleRad * 180) / Math.PI + 90;
+                    if (!e.evt.shiftKey) {
+                      deg = Math.round(deg / 5) * 5;
+                    }
+                    deg = ((deg % 360) + 360) % 360;
+                    // Mantieni la maniglia ancorata localmente
+                    e.target.position({ x: 0, y: handleOffsetY });
+                    onRotateMove(item.id, deg);
+                  }}
+                  onDragEnd={(e) => {
+                    e.cancelBubble = true;
+                    e.target.position({ x: 0, y: handleOffsetY });
+                    onRotateEnd();
+                  }}
+                />
+              </Group>
+            )}
+          </Group>
+        );
+      })}
+    </Group>
+  );
+};

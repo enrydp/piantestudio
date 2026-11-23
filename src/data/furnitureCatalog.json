@@ -1,0 +1,227 @@
+[
+  {
+    "id": "sofa-2",
+    "nome": "Divano 2 posti",
+    "categoria": "Soggiorno",
+    "dimensioni": { "width": 165, "depth": 90, "height": 82 },
+    "coloreDefault": "#5b6e82",
+    "materialeDefault": "fabric",
+    "tipoGeometria": "sofa_2"
+  },
+  {
+    "id": "sofa-3",
+    "nome": "Divano 3 posti",
+    "categoria": "Soggiorno",
+    "dimensioni": { "width": 220, "depth": 95, "height": 84 },
+    "coloreDefault": "#4f6478",
+    "materialeDefault": "fabric",
+    "tipoGeometria": "sofa_3"
+  },
+  {
+    "id": "armchair",
+    "nome": "Poltrona",
+    "categoria": "Soggiorno",
+    "dimensioni": { "width": 85, "depth": 85, "height": 82 },
+    "coloreDefault": "#b57c52",
+    "materialeDefault": "leather",
+    "tipoGeometria": "armchair"
+  },
+  {
+    "id": "coffee-table",
+    "nome": "Tavolino",
+    "categoria": "Soggiorno",
+    "dimensioni": { "width": 110, "depth": 60, "height": 42 },
+    "coloreDefault": "#a8794c",
+    "materialeDefault": "wood",
+    "tipoGeometria": "coffee_table"
+  },
+  {
+    "id": "tv-stand",
+    "nome": "Mobile TV",
+    "categoria": "Soggiorno",
+    "dimensioni": { "width": 160, "depth": 45, "height": 55 },
+    "coloreDefault": "#8b6443",
+    "materialeDefault": "wood",
+    "tipoGeometria": "tv_stand"
+  },
+  {
+    "id": "bookshelf",
+    "nome": "Libreria",
+    "categoria": "Soggiorno",
+    "dimensioni": { "width": 120, "depth": 35, "height": 200 },
+    "coloreDefault": "#9c7048",
+    "materialeDefault": "wood",
+    "tipoGeometria": "bookshelf"
+  },
+  {
+    "id": "kitchen-linear",
+    "nome": "Cucina lineare",
+    "categoria": "Cucina",
+    "dimensioni": { "width": 260, "depth": 65, "height": 90 },
+    "coloreDefault": "#e6e2da",
+    "materialeDefault": "matte",
+    "tipoGeometria": "kitchen_linear"
+  },
+  {
+    "id": "kitchen-island",
+    "nome": "Isola cucina",
+    "categoria": "Cucina",
+    "dimensioni": { "width": 180, "depth": 90, "height": 90 },
+    "coloreDefault": "#d9d4cb",
+    "materialeDefault": "matte",
+    "tipoGeometria": "kitchen_island"
+  },
+  {
+    "id": "dining-table",
+    "nome": "Tavolo da pranzo",
+    "categoria": "Cucina",
+    "dimensioni": { "width": 160, "depth": 90, "height": 76 },
+    "coloreDefault": "#9e7146",
+    "materialeDefault": "wood",
+    "tipoGeometria": "dining_table"
+  },
+  {
+    "id": "chair",
+    "nome": "Sedia",
+    "categoria": "Cucina",
+    "dimensioni": { "width": 46, "depth": 48, "height": 84 },
+    "coloreDefault": "#8a623f",
+    "materialeDefault": "wood",
+    "tipoGeometria": "chair"
+  },
+  {
+    "id": "bed-single",
+    "nome": "Letto singolo",
+    "categoria": "Camera",
+    "dimensioni": { "width": 100, "depth": 205, "height": 95 },
+    "coloreDefault": "#d8dee6",
+    "materialeDefault": "fabric",
+    "tipoGeometria": "bed_single"
+  },
+  {
+    "id": "bed-double",
+    "nome": "Letto matrimoniale",
+    "categoria": "Camera",
+    "dimensioni": { "width": 175, "depth": 210, "height": 105 },
+    "coloreDefault": "#cfd6df",
+    "materialeDefault": "fabric",
+    "tipoGeometria": "bed_double"
+  },
+  {
+    "id": "nightstand",
+    "nome": "Comodino",
+    "categoria": "Camera",
+    "dimensioni": { "width": 50, "depth": 42, "height": 52 },
+    "coloreDefault": "#9b724d",
+    "materialeDefault": "wood",
+    "tipoGeometria": "nightstand"
+  },
+  {
+    "id": "wardrobe",
+    "nome": "Armadio",
+    "categoria": "Camera",
+    "dimensioni": { "width": 180, "depth": 60, "height": 230 },
+    "coloreDefault": "#dfd9ce",
+    "materialeDefault": "matte",
+    "tipoGeometria": "wardrobe"
+  },
+  {
+    "id": "dresser",
+    "nome": "Cassettiera",
+    "categoria": "Camera",
+    "dimensioni": { "width": 110, "depth": 48, "height": 85 },
+    "coloreDefault": "#a67c52",
+    "materialeDefault": "wood",
+    "tipoGeometria": "dresser"
+  },
+  {
+    "id": "sink",
+    "nome": "Lavabo",
+    "categoria": "Bagno",
+    "dimensioni": { "width": 75, "depth": 50, "height": 85 },
+    "coloreDefault": "#f4f6f8",
+    "materialeDefault": "ceramic",
+    "tipoGeometria": "sink"
+  },
+  {
+    "id": "wc",
+    "nome": "WC",
+    "categoria": "Bagno",
+    "dimensioni": { "width": 40, "depth": 62, "height": 78 },
+    "coloreDefault": "#f7f9fa",
+    "materialeDefault": "ceramic",
+    "tipoGeometria": "wc"
+  },
+  {
+    "id": "shower",
+    "nome": "Doccia",
+    "categoria": "Bagno",
+    "dimensioni": { "width": 90, "depth": 90, "height": 210 },
+    "coloreDefault": "#e5eef4",
+    "materialeDefault": "ceramic",
+    "tipoGeometria": "shower"
+  },
+  {
+    "id": "bathtub",
+    "nome": "Vasca da bagno",
+    "categoria": "Bagno",
+    "dimensioni": { "width": 170, "depth": 75, "height": 58 },
+    "coloreDefault": "#f5f7f9",
+    "materialeDefault": "ceramic",
+    "tipoGeometria": "bathtub"
+  },
+  {
+    "id": "desk",
+    "nome": "Scrivania",
+    "categoria": "Altro",
+    "dimensioni": { "width": 140, "depth": 70, "height": 75 },
+    "coloreDefault": "#a3784e",
+    "materialeDefault": "wood",
+    "tipoGeometria": "desk"
+  },
+  {
+    "id": "washing-machine",
+    "nome": "Lavatrice",
+    "categoria": "Altro",
+    "dimensioni": { "width": 60, "depth": 60, "height": 85 },
+    "coloreDefault": "#eef1f4",
+    "materialeDefault": "metal",
+    "tipoGeometria": "washing_machine"
+  },
+  {
+    "id": "plant",
+    "nome": "Pianta da interno",
+    "categoria": "Altro",
+    "dimensioni": { "width": 45, "depth": 45, "height": 135 },
+    "coloreDefault": "#4a7c59",
+    "materialeDefault": "matte",
+    "tipoGeometria": "plant"
+  },
+  {
+    "id": "stairs-straight",
+    "nome": "Scala dritta",
+    "categoria": "Scale",
+    "dimensioni": { "width": 100, "depth": 280, "height": 270 },
+    "coloreDefault": "#c7a17a",
+    "materialeDefault": "wood",
+    "tipoGeometria": "stairs_straight"
+  },
+  {
+    "id": "stairs-l",
+    "nome": "Scala a L con pianerottolo",
+    "categoria": "Scale",
+    "dimensioni": { "width": 200, "depth": 240, "height": 270 },
+    "coloreDefault": "#c7a17a",
+    "materialeDefault": "wood",
+    "tipoGeometria": "stairs_l"
+  },
+  {
+    "id": "stairs-u",
+    "nome": "Scala a U con pianerottolo",
+    "categoria": "Scale",
+    "dimensioni": { "width": 220, "depth": 280, "height": 270 },
+    "coloreDefault": "#d4cec4",
+    "materialeDefault": "matte",
+    "tipoGeometria": "stairs_u"
+  }
+]
