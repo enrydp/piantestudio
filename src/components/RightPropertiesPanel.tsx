@@ -166,6 +166,8 @@ export const RightPropertiesPanel: React.FC<RightPropertiesPanelProps> = ({
     setDefaultWallThickness,
     defaultWallHeight,
     setDefaultWallHeight,
+    wallOpacity,
+    setWallOpacity,
     setFloorplan,
     setShowCropModal,
     setFloorplanOpacity,
@@ -332,6 +334,22 @@ export const RightPropertiesPanel: React.FC<RightPropertiesPanelProps> = ({
                       step={0.05}
                       value={project.floorplan.opacity}
                       onChange={(e) => setFloorplanOpacity(Number(e.target.value))}
+                      className="w-full accent-blue-600"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-[11px] mb-1">
+                      <span>Opacità muri (sfumatura)</span>
+                      <span className="font-mono">{Math.round(wallOpacity * 100)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0.1}
+                      max={1}
+                      step={0.05}
+                      value={wallOpacity}
+                      onChange={(e) => setWallOpacity(Number(e.target.value))}
                       className="w-full accent-blue-600"
                     />
                   </div>
@@ -685,6 +703,50 @@ export const RightPropertiesPanel: React.FC<RightPropertiesPanelProps> = ({
         {/* ================= STEP 1 ================= */}
         {step === 1 && (
           <>
+            {/* Controllo sfumatura muri e piantina per posizionare porte e finestre con precisione */}
+            {project.floorplan && (
+              <section className="space-y-2 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                <div className="font-semibold text-slate-800 dark:text-slate-100">
+                  Sfumatura muri e piantina
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  I muri sono sfumati così puoi vedere porte e finestre direttamente sulla piantina.
+                </p>
+                <div>
+                  <div className="flex justify-between text-[11px] mb-0.5">
+                    <span>Opacità muri</span>
+                    <span className="font-mono">{Math.round(wallOpacity * 100)}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0.1}
+                    max={1}
+                    step={0.05}
+                    value={wallOpacity}
+                    onChange={(e) => setWallOpacity(Number(e.target.value))}
+                    className="w-full accent-blue-600"
+                  />
+                </div>
+                <div>
+                  <div className="flex justify-between text-[11px] mb-0.5">
+                    <span>Opacità piantina</span>
+                    <span className="font-mono">
+                      {Math.round(project.floorplan.opacity * 100)}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0.1}
+                    max={1}
+                    step={0.05}
+                    value={project.floorplan.opacity}
+                    onChange={(e) => setFloorplanOpacity(Number(e.target.value))}
+                    className="w-full accent-blue-600"
+                  />
+                </div>
+              </section>
+            )}
+
             <section className="space-y-2 pb-4 border-b border-slate-200 dark:border-slate-800">
               <h3 className="font-semibold text-slate-800 dark:text-slate-100">
                 Inserisci apertura
@@ -1071,6 +1133,43 @@ export const RightPropertiesPanel: React.FC<RightPropertiesPanelProps> = ({
                   <div className="p-2 rounded-lg bg-red-100 dark:bg-red-950/70 border border-red-300 dark:border-red-800 text-red-700 dark:text-red-300 text-[11px] flex items-center gap-1.5">
                     <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
                     <span>{conflicts[selectedFurniture.id]}</span>
+                  </div>
+                )}
+
+                {/* Scelta lato prima rampa per scale a L e a U */}
+                {(selectedFurniture.geometryType === 'stairs_l' ||
+                  selectedFurniture.geometryType === 'stairs_u') && (
+                  <div className="space-y-1">
+                    <span className="text-[11px] text-slate-500">Prima rampa (salita)</span>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {(
+                        [
+                          { value: 'left', label: 'Sinistra' },
+                          { value: 'right', label: 'Destra' },
+                        ] as const
+                      ).map((opt) => {
+                        const active =
+                          (selectedFurniture.stairsFirstFlight ?? 'left') === opt.value;
+                        return (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() =>
+                              updateFurniture(selectedFurniture.id, {
+                                stairsFirstFlight: opt.value,
+                              })
+                            }
+                            className={`py-1.5 px-2 rounded-lg text-[11px] font-semibold border transition-colors cursor-pointer ${
+                              active
+                                ? 'bg-blue-600 text-white border-blue-600'
+                                : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
 

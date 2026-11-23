@@ -15,6 +15,7 @@ interface OpeningLayerProps {
   selectedOpeningId: string | null;
   interactive: boolean;
   isDark: boolean;
+  translucentCutout?: boolean;
   onSelectOpening: (id: string) => void;
   onOpeningDragStart: () => void;
   onOpeningDragMove: (opening: Opening, pointerMeters: Point2D) => void;
@@ -27,13 +28,20 @@ export const OpeningLayer: React.FC<OpeningLayerProps> = ({
   selectedOpeningId,
   interactive,
   isDark,
+  translucentCutout = false,
   onSelectOpening,
   onOpeningDragStart,
   onOpeningDragMove,
   onOpeningDragEnd,
 }) => {
   const wallMap = new Map(walls.map((w) => [w.id, w]));
-  const cutoutFill = isDark ? '#0f172a' : '#f8fafc';
+  const cutoutFill = translucentCutout
+    ? isDark
+      ? 'rgba(15, 23, 42, 0.6)'
+      : 'rgba(248, 250, 252, 0.6)'
+    : isDark
+      ? '#0f172a'
+      : '#f8fafc';
 
   return (
     <Group>

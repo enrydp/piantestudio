@@ -152,6 +152,8 @@ export interface FurnitureCatalogItem {
   glbUrl?: string;
 }
 
+export type StairsFirstFlight = 'left' | 'right';
+
 /** Istanza di un mobile posizionata nella piantina */
 export interface Furniture {
   id: string;
@@ -179,6 +181,8 @@ export interface Furniture {
   color: string;
   /** Tipo materiale PBR */
   material: FurnitureMaterial;
+  /** Lato della prima rampa per le scale a L e a U ('left' | 'right') */
+  stairsFirstFlight?: StairsFirstFlight;
   /** URL / Data URL opzionale di un modello .glb personalizzato */
   customGlbUrl?: string;
   /** Nome file del modello .glb personalizzato */

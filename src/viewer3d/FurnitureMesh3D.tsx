@@ -551,18 +551,20 @@ const ProceduralFurniture: React.FC<{ item: Furniture }> = ({ item }) => {
       const stepsUpper = 7;
       const lowerRun = d - landingD;
       const upperRun = w - landingW;
+      const firstIsRight = item.stairsFirstFlight === 'right';
+      const landingCenterX = firstIsRight ? w / 2 - landingW / 2 : -w / 2 + landingW / 2;
       return (
         <group>
           {/* Pianerottolo intermedio */}
           <mesh
-            position={[-w / 2 + landingW / 2, landingY / 2, -d / 2 + landingD / 2]}
+            position={[landingCenterX, landingY / 2, -d / 2 + landingD / 2]}
             castShadow
             receiveShadow
           >
             <boxGeometry args={[landingW, landingY, landingD]} />
             {mainMat}
           </mesh>
-          {/* Rampa inferiore (sale da +Z verso il pianerottolo -Z) */}
+          {/* 1ª rampa inferiore (sale da +Z verso il pianerottolo -Z) */}
           {Array.from({ length: stepsLower }).map((_, i) => {
             const curH = ((i + 1) / (stepsLower + 1)) * landingY;
             const sd = lowerRun / stepsLower;
@@ -570,7 +572,7 @@ const ProceduralFurniture: React.FC<{ item: Furniture }> = ({ item }) => {
             return (
               <mesh
                 key={`lo_${i}`}
-                position={[-w / 2 + landingW / 2, curH / 2, zPos]}
+                position={[landingCenterX, curH / 2, zPos]}
                 castShadow
                 receiveShadow
               >
@@ -579,11 +581,13 @@ const ProceduralFurniture: React.FC<{ item: Furniture }> = ({ item }) => {
               </mesh>
             );
           })}
-          {/* Rampa superiore (sale dal pianerottolo verso +X) */}
+          {/* 2ª rampa superiore (sale dal pianerottolo verso +X o -X) */}
           {Array.from({ length: stepsUpper }).map((_, i) => {
             const curH = landingY + ((i + 1) / stepsUpper) * (h - landingY);
             const sw = upperRun / stepsUpper;
-            const xPos = -w / 2 + landingW + (i + 0.5) * sw;
+            const xPos = firstIsRight
+              ? w / 2 - landingW - (i + 0.5) * sw
+              : -w / 2 + landingW + (i + 0.5) * sw;
             return (
               <mesh
                 key={`up_${i}`}
@@ -597,7 +601,7 @@ const ProceduralFurniture: React.FC<{ item: Furniture }> = ({ item }) => {
             );
           })}
           {/* Parapetto sul pianerottolo */}
-          <mesh position={[-w / 2 + landingW / 2, landingY + 0.48, -d / 2 + 0.04]} castShadow>
+          <mesh position={[landingCenterX, landingY + 0.48, -d / 2 + 0.04]} castShadow>
             <boxGeometry args={[landingW, 0.92, 0.04]} />
             <meshPhysicalMaterial color="#dbeafe" transparent opacity={0.35} roughness={0.15} />
           </mesh>
@@ -611,6 +615,9 @@ const ProceduralFurniture: React.FC<{ item: Furniture }> = ({ item }) => {
       const flightW = w * 0.45;
       const runLen = d - landingD;
       const stepsPerFlight = 8;
+      const firstIsRight = item.stairsFirstFlight === 'right';
+      const firstX = firstIsRight ? w / 2 - flightW / 2 : -w / 2 + flightW / 2;
+      const secondX = firstIsRight ? -w / 2 + flightW / 2 : w / 2 - flightW / 2;
       return (
         <group>
           {/* Pianerottolo largo di fondo */}
@@ -618,7 +625,7 @@ const ProceduralFurniture: React.FC<{ item: Furniture }> = ({ item }) => {
             <boxGeometry args={[w, landingY, landingD]} />
             {mainMat}
           </mesh>
-          {/* 1ª rampa (sinistra, sale da +Z a -Z fino al pianerottolo) */}
+          {/* 1ª rampa (sinistra o destra, sale da +Z a -Z fino al pianerottolo) */}
           {Array.from({ length: stepsPerFlight }).map((_, i) => {
             const curH = ((i + 1) / (stepsPerFlight + 1)) * landingY;
             const sd = runLen / stepsPerFlight;
@@ -626,7 +633,7 @@ const ProceduralFurniture: React.FC<{ item: Furniture }> = ({ item }) => {
             return (
               <mesh
                 key={`u1_${i}`}
-                position={[-w / 2 + flightW / 2, curH / 2, zPos]}
+                position={[firstX, curH / 2, zPos]}
                 castShadow
                 receiveShadow
               >
@@ -635,7 +642,7 @@ const ProceduralFurniture: React.FC<{ item: Furniture }> = ({ item }) => {
               </mesh>
             );
           })}
-          {/* 2ª rampa (destra, sale dal pianerottolo -Z verso +Z) */}
+          {/* 2ª rampa (sale dal pianerottolo -Z verso +Z) */}
           {Array.from({ length: stepsPerFlight }).map((_, i) => {
             const curH = landingY + ((i + 1) / stepsPerFlight) * (h - landingY);
             const sd = runLen / stepsPerFlight;
@@ -643,7 +650,7 @@ const ProceduralFurniture: React.FC<{ item: Furniture }> = ({ item }) => {
             return (
               <mesh
                 key={`u2_${i}`}
-                position={[w / 2 - flightW / 2, curH / 2, zPos]}
+                position={[secondX, curH / 2, zPos]}
                 castShadow
                 receiveShadow
               >

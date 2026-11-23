@@ -94,6 +94,7 @@ export const FloorplanCanvas: React.FC<FloorplanCanvasProps> = ({
     autoFurnishMode,
     setAutoFurnishMode,
     defaultWallThickness,
+    wallOpacity,
     snapAngles,
     snapToGrid,
     gridSize,
@@ -719,6 +720,8 @@ export const FloorplanCanvas: React.FC<FloorplanCanvasProps> = ({
         : 'cursor-default';
 
   const showEmptyDropzone = step === 0 && !project.floorplan && project.walls.length === 0;
+  // Quando la piantina di riferimento è visibile (Step 0 e Step 1), rende i muri sfumati per vedere porte e finestre sottostanti
+  const effectiveWallOpacity = step !== 2 && Boolean(project.floorplan) ? wallOpacity : 1;
 
   return (
     <div
@@ -816,6 +819,7 @@ export const FloorplanCanvas: React.FC<FloorplanCanvasProps> = ({
             interactive={step === 0 && (activeTool === 'select' || activeTool === 'demolish')}
             demolishMode={step === 0 && activeTool === 'demolish'}
             canEditVertices={step === 0 && activeTool === 'select'}
+            wallOpacity={effectiveWallOpacity}
             draftPoints={draftPoints}
             previewPoint={previewPoint}
             snappedVertex={snappedVertex}
@@ -841,6 +845,7 @@ export const FloorplanCanvas: React.FC<FloorplanCanvasProps> = ({
             selectedOpeningId={step === 1 ? selectedOpeningId : null}
             interactive={step === 1 && activeTool === 'select'}
             isDark={isDark}
+            translucentCutout={effectiveWallOpacity < 0.85}
             onSelectOpening={(id) => selectOpening(id)}
             onOpeningDragStart={() => pushHistorySnapshot()}
             onOpeningDragMove={handleOpeningDragMove}
@@ -877,6 +882,7 @@ export const FloorplanCanvas: React.FC<FloorplanCanvasProps> = ({
                 selectedOpeningId="__preview__"
                 interactive={false}
                 isDark={isDark}
+                translucentCutout={effectiveWallOpacity < 0.85}
                 onSelectOpening={() => {}}
                 onOpeningDragStart={() => {}}
                 onOpeningDragMove={() => {}}

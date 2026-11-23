@@ -166,6 +166,7 @@ interface ProjectStore {
   // Preferenze strumenti
   defaultWallThickness: number; // metri (default 0.20)
   defaultWallHeight: number;    // metri (default 2.70)
+  wallOpacity: number;          // opacità muri sopra la piantina in Step 0 e 1 (0.1..1)
   snapToGrid: boolean;
   gridSize: number;             // metri (default 0.10)
   snapToWalls: boolean;
@@ -193,6 +194,7 @@ interface ProjectStore {
   setAutoFurnishMode: (room: AutoRoomType | null) => void;
   setDefaultWallThickness: (meters: number) => void;
   setDefaultWallHeight: (meters: number) => void;
+  setWallOpacity: (opacity: number) => void;
   setSnapToGrid: (v: boolean) => void;
   setSnapToWalls: (v: boolean) => void;
   setSnapAngles: (v: boolean) => void;
@@ -297,6 +299,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
 
     defaultWallThickness: 0.2,
     defaultWallHeight: 2.7,
+    wallOpacity: 0.35,
     snapToGrid: true,
     gridSize: 0.1,
     snapToWalls: true,
@@ -349,6 +352,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
       set({ autoFurnishMode, activeTool: 'select' }),
     setDefaultWallThickness: (defaultWallThickness) => set({ defaultWallThickness }),
     setDefaultWallHeight: (defaultWallHeight) => set({ defaultWallHeight }),
+    setWallOpacity: (wallOpacity) =>
+      set({ wallOpacity: Math.max(0.1, Math.min(1, wallOpacity)) }),
     setSnapToGrid: (snapToGrid) => set({ snapToGrid }),
     setSnapToWalls: (snapToWalls) => set({ snapToWalls }),
     setSnapAngles: (snapAngles) => set({ snapAngles }),
@@ -803,6 +808,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         rotation: 0,
         color: item.coloreDefault,
         material: item.materialeDefault,
+        stairsFirstFlight:
+          item.tipoGeometria === 'stairs_l' || item.tipoGeometria === 'stairs_u'
+            ? 'left'
+            : undefined,
         customGlbUrl: item.glbUrl,
       };
       commit((p) => ({ ...p, furniture: [...p.furniture, furn] }));

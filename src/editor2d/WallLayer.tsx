@@ -14,6 +14,7 @@ interface WallLayerProps {
   interactive: boolean;
   demolishMode: boolean;
   canEditVertices: boolean;
+  wallOpacity?: number;
   draftPoints: Point2D[];
   previewPoint: Point2D | null;
   snappedVertex: Point2D | null;
@@ -32,6 +33,7 @@ export const WallLayer: React.FC<WallLayerProps> = ({
   interactive,
   demolishMode,
   canEditVertices,
+  wallOpacity = 1,
   draftPoints,
   previewPoint,
   snappedVertex,
@@ -106,24 +108,42 @@ export const WallLayer: React.FC<WallLayerProps> = ({
                 />
               </>
             ) : (
-              <Line
-                points={[p1.x, p1.y, p2.x, p2.y]}
-                stroke={
-                  isHoveredDemolish
-                    ? '#dc2626'
-                    : isSelected
-                      ? wallSelectedFill
-                      : wallFill
-                }
-                strokeWidth={strokeW}
-                lineCap="square"
-                hitStrokeWidth={Math.max(strokeW + 10, 22)}
-                listening={interactive}
-                onMouseEnter={() => demolishMode && setHoveredWallId(wall.id)}
-                onMouseLeave={() => setHoveredWallId((curr) => (curr === wall.id ? null : curr))}
-                onClick={handleWallClick}
-                onTap={handleWallClick}
-              />
+              <>
+                <Line
+                  points={[p1.x, p1.y, p2.x, p2.y]}
+                  stroke={
+                    isHoveredDemolish
+                      ? '#dc2626'
+                      : isSelected
+                        ? wallSelectedFill
+                        : wallFill
+                  }
+                  strokeWidth={strokeW}
+                  opacity={
+                    isSelected || isHoveredDemolish
+                      ? Math.max(wallOpacity, 0.72)
+                      : wallOpacity
+                  }
+                  lineCap="square"
+                  hitStrokeWidth={Math.max(strokeW + 10, 22)}
+                  listening={interactive}
+                  onMouseEnter={() => demolishMode && setHoveredWallId(wall.id)}
+                  onMouseLeave={() => setHoveredWallId((curr) => (curr === wall.id ? null : curr))}
+                  onClick={handleWallClick}
+                  onTap={handleWallClick}
+                />
+                {/* Linea guida sottile lungo l'asse del muro quando i muri sono sfumati */}
+                {wallOpacity < 0.85 && !isSelected && !isHoveredDemolish && (
+                  <Line
+                    points={[p1.x, p1.y, p2.x, p2.y]}
+                    stroke={isDark ? '#94a3b8' : '#334155'}
+                    strokeWidth={1.2}
+                    opacity={Math.min(0.6, wallOpacity + 0.2)}
+                    dash={[6, 5]}
+                    listening={false}
+                  />
+                )}
+              </>
             )}
 
             {/* Asse centrale sottile sul muro selezionato */}
@@ -144,6 +164,7 @@ export const WallLayer: React.FC<WallLayerProps> = ({
                 y={midY + ny * labelOffset}
                 offsetX={isDemolished ? 34 : 24}
                 offsetY={10}
+                opacity={isSelected || isDemolished ? 1 : wallOpacity < 0.85 ? 0.65 : 1}
                 listening={false}
               >
                 <Tag

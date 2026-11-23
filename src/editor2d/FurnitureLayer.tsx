@@ -221,11 +221,17 @@ const FurniturePlanDetail: React.FC<{
   if (t === 'stairs_l') {
     const landingW = w * 0.48;
     const landingH = d * 0.42;
+    const firstIsRight = item.stairsFirstFlight === 'right';
+    const landingX = firstIsRight ? hw - landingW : -hw;
+    const upperStartX = firstIsRight ? -hw : -hw + landingW;
+    const firstCenterX = landingX + landingW / 2;
+    const midLandingY = -hd + landingH / 2;
+    const endX = firstIsRight ? -hw + 8 : hw - 8;
     return (
       <>
-        {/* Pianerottolo in alto a sinistra */}
+        {/* Pianerottolo in alto (sinistra o destra in base alla 1ª rampa) */}
         <Rect
-          x={-hw}
+          x={landingX}
           y={-hd}
           width={landingW}
           height={landingH}
@@ -233,22 +239,22 @@ const FurniturePlanDetail: React.FC<{
           stroke={stroke}
           strokeWidth={1.2}
         />
-        {/* Gradini rampa verticale sinistra */}
+        {/* Gradini 1ª rampa verticale */}
         {Array.from({ length: 6 }).map((_, i) => {
           const sy = -hd + landingH + ((i + 1) / 7) * (d - landingH);
           return (
             <Line
               key={`v_${i}`}
-              points={[-hw, sy, -hw + landingW, sy]}
+              points={[landingX, sy, landingX + landingW, sy]}
               stroke={stroke}
               strokeWidth={1}
               opacity={0.75}
             />
           );
         })}
-        {/* Gradini rampa orizzontale destra */}
+        {/* Gradini 2ª rampa orizzontale */}
         {Array.from({ length: 5 }).map((_, i) => {
-          const sx = -hw + landingW + ((i + 1) / 6) * (w - landingW);
+          const sx = upperStartX + ((i + 1) / 6) * (w - landingW);
           return (
             <Line
               key={`h_${i}`}
@@ -259,18 +265,23 @@ const FurniturePlanDetail: React.FC<{
             />
           );
         })}
-        {/* Freccia ad L */}
+        {/* Freccia ad L con pallino inizio (1ª rampa) e punta salita */}
+        <Circle x={firstCenterX} y={hd - 8} radius={3.2} fill={stroke} listening={false} />
         <Line
-          points={[
-            -hw + landingW / 2,
-            hd - 8,
-            -hw + landingW / 2,
-            -hd + landingH / 2,
-            hw - 8,
-            -hd + landingH / 2,
-          ]}
+          points={[firstCenterX, hd - 8, firstCenterX, midLandingY, endX, midLandingY]}
           stroke={stroke}
-          strokeWidth={1.5}
+          strokeWidth={1.6}
+          listening={false}
+        />
+        <Line
+          points={
+            firstIsRight
+              ? [endX + 6, midLandingY - 5, endX, midLandingY, endX + 6, midLandingY + 5]
+              : [endX - 6, midLandingY - 5, endX, midLandingY, endX - 6, midLandingY + 5]
+          }
+          stroke={stroke}
+          strokeWidth={1.6}
+          listening={false}
         />
       </>
     );
@@ -279,6 +290,9 @@ const FurniturePlanDetail: React.FC<{
   if (t === 'stairs_u') {
     const landingH = d * 0.34;
     const flightW = w * 0.46;
+    const firstIsRight = item.stairsFirstFlight === 'right';
+    const firstCenterX = firstIsRight ? hw - flightW / 2 : -hw + flightW / 2;
+    const secondCenterX = firstIsRight ? -hw + flightW / 2 : hw - flightW / 2;
     return (
       <>
         {/* Pianerottolo superiore */}
@@ -290,6 +304,15 @@ const FurniturePlanDetail: React.FC<{
           fill="rgba(255,255,255,0.28)"
           stroke={stroke}
           strokeWidth={1.2}
+        />
+        {/* Evidenziazione leggera della 1ª rampa */}
+        <Rect
+          x={firstIsRight ? hw - flightW : -hw}
+          y={-hd + landingH}
+          width={flightW}
+          height={d - landingH}
+          fill="rgba(255,255,255,0.16)"
+          listening={false}
         />
         {/* Divisorio centrale / tromba scale */}
         <Rect
@@ -311,20 +334,28 @@ const FurniturePlanDetail: React.FC<{
             </React.Fragment>
           );
         })}
-        {/* Freccia a U */}
+        {/* Freccia a U con pallino di partenza sulla 1ª rampa e punta in uscita sulla 2ª */}
+        <Circle x={firstCenterX} y={hd - 8} radius={3.2} fill={stroke} listening={false} />
         <Line
           points={[
-            -hw + flightW / 2,
+            firstCenterX,
             hd - 8,
-            -hw + flightW / 2,
+            firstCenterX,
             -hd + landingH / 2,
-            hw - flightW / 2,
+            secondCenterX,
             -hd + landingH / 2,
-            hw - flightW / 2,
+            secondCenterX,
             hd - 8,
           ]}
           stroke={stroke}
-          strokeWidth={1.5}
+          strokeWidth={1.6}
+          listening={false}
+        />
+        <Line
+          points={[secondCenterX - 5, hd - 14, secondCenterX, hd - 8, secondCenterX + 5, hd - 14]}
+          stroke={stroke}
+          strokeWidth={1.6}
+          listening={false}
         />
       </>
     );
