@@ -14,6 +14,7 @@ import type Konva from 'konva';
 import {
   AlertTriangle,
   Check,
+  Loader2,
   Maximize2,
   RotateCcw,
   Upload,
@@ -53,6 +54,8 @@ import {
   snapFurniturePosition,
 } from '../utils/geometry';
 import { loadFloorplanFile } from '../utils/pdf';
+import { isCadFile, parseCadFile, type ParsedCadDocument } from '../utils/cadImport';
+import { CadImportModal } from '../components/CadImportModal';
 import { WallLayer } from './WallLayer';
 import { OpeningLayer } from './OpeningLayer';
 import { FurnitureLayer } from './FurnitureLayer';
@@ -94,6 +97,7 @@ export const FloorplanCanvas: React.FC<FloorplanCanvasProps> = ({
     autoFurnishMode,
     setAutoFurnishMode,
     defaultWallThickness,
+    defaultWallHeight,
     wallOpacity,
     snapAngles,
     snapToGrid,
@@ -108,6 +112,7 @@ export const FloorplanCanvas: React.FC<FloorplanCanvasProps> = ({
     toggleFurnitureSelection,
     clearSelection,
     setFloorplan,
+    applyCadImport,
     setCalibrationPoint,
     clearCalibrationPoints,
     applyCalibration,
@@ -135,6 +140,8 @@ export const FloorplanCanvas: React.FC<FloorplanCanvasProps> = ({
   const [spaceDown, setSpaceDown] = useState(false);
   const [shiftDown, setShiftDown] = useState(false);
   const [isDragOverFile, setIsDragOverFile] = useState(false);
+  const [cadLoadingName, setCadLoadingName] = useState<string | null>(null);
+  const [pendingCadDoc, setPendingCadDoc] = useState<ParsedCadDocument | null>(null);
   const panStartRef = useRef<{ x: number; y: number; viewX: number; viewY: number } | null>(null);
 
   // Stato tracciatura polilinea muri (Step 0)
@@ -536,14 +543,26 @@ export const FloorplanCanvas: React.FC<FloorplanCanvasProps> = ({
     }
   };
 
-  /** Gestione upload file immagine / PDF */
+  /** Gestione upload file immagine / PDF / DWG / DXF */
   const handleProcessFile = async (file: File) => {
     try {
+      if (isCadFile(file)) {
+        setCadLoadingName(file.name);
+        try {
+          const parsed = await parseCadFile(file);
+          setPendingCadDoc(parsed);
+        } finally {
+          setCadLoadingName(null);
+        }
+        return;
+      }
       const img = await loadFloorplanFile(file);
       setFloorplan(img);
     } catch (err) {
       showToast(
-        err instanceof Error ? err.message : 'Formato file non supportato (usa PNG, JPG o PDF)',
+        err instanceof Error
+          ? err.message
+          : 'Formato file non supportato (usa PNG, JPG, PDF, DXF o DWG)',
         'error'
       );
     }
@@ -741,7 +760,7 @@ export const FloorplanCanvas: React.FC<FloorplanCanvasProps> = ({
       <input
         ref={externalFileInputRef}
         type="file"
-        accept="image/png,image/jpeg,image/webp,application/pdf,.pdf"
+        accept="image/png,image/jpeg,image/webp,application/pdf,.pdf,.dxf,.dwg"
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];
@@ -1084,8 +1103,8 @@ export const FloorplanCanvas: React.FC<FloorplanCanvasProps> = ({
               Carica la tua piantina
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
-              Trascina qui un’immagine <strong>PNG / JPG</strong> oppure un <strong>PDF</strong> (prima pagina),
-              oppure inizia subito con la nostra piantina d’esempio o tracciando i muri a mano.
+              Trascina qui un’immagine <strong>PNG / JPG</strong>, un <strong>PDF</strong> oppure un file CAD <strong>DWG / DXF</strong> (già in scala reale 1:1),
+              oppure inizia con la piantina d’esempio.
             </p>
             <div className="mt-5 flex flex-col sm:flex-row gap-2 justify-center">
               <button
@@ -1094,7 +1113,7 @@ export const FloorplanCanvas: React.FC<FloorplanCanvasProps> = ({
                 className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
               >
                 <Upload className="w-3.5 h-3.5" />
-                Scegli file (PNG/JPG/PDF)
+                Scegli file (PNG/PDF/DWG/DXF)
               </button>
               <button
                 type="button"
@@ -1120,9 +1139,38 @@ export const FloorplanCanvas: React.FC<FloorplanCanvasProps> = ({
       {isDragOverFile && (
         <div className="absolute inset-3 z-30 rounded-2xl border-2 border-dashed border-blue-500 bg-blue-500/10 backdrop-blur-[1px] flex items-center justify-center pointer-events-none">
           <div className="px-5 py-3 rounded-xl bg-blue-600 text-white text-sm font-semibold shadow-lg">
-            Rilascia qui la piantina (PNG, JPG o PDF)
+            Rilascia qui la piantina (PNG, JPG, PDF, DWG o DXF)
           </div>
         </div>
+      )}
+
+      {/* Overlay caricamento/decodifica file CAD (.DWG / .DXF) */}
+      {cadLoadingName && (
+        <div className="absolute inset-0 z-40 bg-slate-950/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="px-5 py-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-2xl flex items-center gap-3 text-xs font-semibold text-slate-800 dark:text-slate-100">
+            <Loader2 className="w-5 h-5 text-blue-600 animate-spin shrink-0" />
+            <div>
+              <div>Lettura file CAD: {cadLoadingName}</div>
+              <div className="text-[11px] font-normal text-slate-500 mt-0.5">
+                Estrazione geometrie, layer e quote in corso...
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modale anteprima e importazione CAD (.DWG / .DXF) */}
+      {pendingCadDoc && (
+        <CadImportModal
+          doc={pendingCadDoc}
+          defaultWallThickness={defaultWallThickness}
+          defaultWallHeight={defaultWallHeight}
+          onCancel={() => setPendingCadDoc(null)}
+          onImport={({ floorplan, pixelsPerMeter, walls }) => {
+            applyCadImport(floorplan, pixelsPerMeter, walls);
+            setPendingCadDoc(null);
+          }}
+        />
       )}
 
       {/* Barra inferiore: coordinate, scala e controlli zoom */}

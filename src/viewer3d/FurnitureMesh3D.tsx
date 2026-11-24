@@ -452,7 +452,7 @@ const ProceduralFurniture: React.FC<{ item: Furniture }> = ({ item }) => {
     case 'boiler': {
       return (
         <group>
-          {/* Caldaia murale montata in alto */}
+          {/* Caldaia a gas murale montata in alto */}
           <mesh position={[0, 1.35 + h / 2, 0]} castShadow receiveShadow>
             <boxGeometry args={[w, h, d]} />
             {mainMat}
@@ -462,13 +462,201 @@ const ProceduralFurniture: React.FC<{ item: Furniture }> = ({ item }) => {
             <boxGeometry args={[w * 0.45, 0.09, 0.01]} />
             <meshStandardMaterial color="#0f172a" roughness={0.2} />
           </mesh>
-          {/* Tubi inferiori */}
+          {/* Tubo scarico fumi coassiale superiore */}
+          <mesh position={[0, 1.35 + h + 0.2, 0]} castShadow>
+            <cylinderGeometry args={[0.05, 0.05, 0.4, 12]} />
+            <meshStandardMaterial color="#e2e8f0" roughness={0.4} metalness={0.3} />
+          </mesh>
+          {/* Tubi inferiori (acqua + gas) */}
           {[-0.1, -0.04, 0.04, 0.1].map((tx, i) => (
             <mesh key={i} position={[tx, 1.2, 0]} castShadow>
               <cylinderGeometry args={[0.01, 0.01, 0.32, 8]} />
-              {chromeMat}
+              {i === 2 ? (
+                <meshStandardMaterial color="#eab308" roughness={0.35} metalness={0.6} />
+              ) : (
+                chromeMat
+              )}
             </mesh>
           ))}
+        </group>
+      );
+    }
+
+    case 'boiler_pellet': {
+      return (
+        <group>
+          {/* Corpo stufa / caldaia a pellet a terra */}
+          <mesh position={[0, h / 2, 0]} castShadow receiveShadow>
+            <boxGeometry args={[w, h, d]} />
+            {mainMat}
+          </mesh>
+          {/* Top nero in ghisa */}
+          <mesh position={[0, h + 0.015, 0]} castShadow>
+            <boxGeometry args={[w + 0.02, 0.03, d + 0.02]} />
+            <meshStandardMaterial color="#1e293b" roughness={0.5} metalness={0.4} />
+          </mesh>
+          {/* Sportello vetro fuoco */}
+          <mesh position={[0, h * 0.56, d / 2 + 0.008]}>
+            <boxGeometry args={[w * 0.56, h * 0.36, 0.015]} />
+            <meshStandardMaterial
+              color="#7c2d12"
+              emissive="#ea580c"
+              emissiveIntensity={0.45}
+              roughness={0.2}
+            />
+          </mesh>
+          {/* Canna fumaria posteriore Ø80 mm */}
+          <mesh position={[0, h + 0.55, -d / 2 + 0.09]} castShadow>
+            <cylinderGeometry args={[0.042, 0.042, 1.1, 14]} />
+            <meshStandardMaterial color="#334155" roughness={0.45} metalness={0.6} />
+          </mesh>
+        </group>
+      );
+    }
+
+    case 'heat_pump_monobloc':
+    case 'heat_pump_split': {
+      const isMono = geometryType === 'heat_pump_monobloc';
+      const footH = 0.06;
+      const bodyH = Math.max(0.45, h - footH);
+      const fanR = Math.min(bodyH * 0.34, w * 0.25);
+      return (
+        <group>
+          {/* Piedini antivibranti */}
+          {[-w / 2 + 0.14, w / 2 - 0.14].map((fx, i) => (
+            <mesh key={i} position={[fx, footH / 2, 0]} castShadow>
+              <boxGeometry args={[0.08, footH, d * 0.88]} />
+              <meshStandardMaterial color="#1e293b" roughness={0.7} />
+            </mesh>
+          ))}
+          {/* Scocca unità pompa di calore */}
+          <mesh position={[0, footH + bodyH / 2, 0]} castShadow receiveShadow>
+            <boxGeometry args={[w, bodyH, d]} />
+            {mainMat}
+          </mesh>
+          {/* Griglia ventilatore frontale */}
+          <mesh
+            position={[-w * 0.14, footH + bodyH * 0.52, d / 2 + 0.008]}
+            rotation={[Math.PI / 2, 0, 0]}
+          >
+            <cylinderGeometry args={[fanR, fanR, 0.015, 22]} />
+            <meshStandardMaterial color="#334155" roughness={0.5} metalness={0.4} />
+          </mesh>
+          {/* Pannello laterale attacchi idraulici (monoblocco) o frigoriferi (splittata) */}
+          <mesh position={[w * 0.36, footH + bodyH * 0.42, d / 2 + 0.006]}>
+            <boxGeometry args={[w * 0.18, bodyH * 0.55, 0.012]} />
+            <meshStandardMaterial
+              color={isMono ? '#0284c7' : '#0891b2'}
+              roughness={0.4}
+              metalness={0.2}
+            />
+          </mesh>
+        </group>
+      );
+    }
+
+    case 'ac_split_high': {
+      const mountY = 2.2;
+      return (
+        <group position={[0, mountY, 0]}>
+          {/* Unità interna split alta */}
+          <mesh position={[0, h / 2, 0]} castShadow receiveShadow>
+            <boxGeometry args={[w, h, d]} />
+            {mainMat}
+          </mesh>
+          {/* Deflettore inferiore */}
+          <mesh position={[0, 0.04, d / 2 + 0.004]} rotation={[0.25, 0, 0]}>
+            <boxGeometry args={[w * 0.9, 0.045, 0.012]} />
+            <meshStandardMaterial color="#cbd5e1" roughness={0.35} />
+          </mesh>
+          {/* LED stato */}
+          <mesh position={[w * 0.36, h * 0.52, d / 2 + 0.005]}>
+            <boxGeometry args={[0.04, 0.012, 0.008]} />
+            <meshStandardMaterial color="#0ea5e9" emissive="#0ea5e9" emissiveIntensity={0.8} />
+          </mesh>
+        </group>
+      );
+    }
+
+    case 'ac_split_low': {
+      const mountY = 0.08;
+      return (
+        <group position={[0, mountY, 0]}>
+          {/* Unità console bassa / fan-coil */}
+          <mesh position={[0, h / 2, 0]} castShadow receiveShadow>
+            <boxGeometry args={[w, h, d]} />
+            {mainMat}
+          </mesh>
+          {/* Griglia uscita aria superiore */}
+          <mesh position={[0, h + 0.005, 0]}>
+            <boxGeometry args={[w * 0.84, 0.012, d * 0.45]} />
+            <meshStandardMaterial color="#475569" roughness={0.5} />
+          </mesh>
+          {/* Fessura ripresa aria inferiore */}
+          <mesh position={[0, 0.07, d / 2 + 0.005]}>
+            <boxGeometry args={[w * 0.82, 0.05, 0.01]} />
+            <meshStandardMaterial color="#64748b" roughness={0.5} />
+          </mesh>
+        </group>
+      );
+    }
+
+    case 'radiator': {
+      const mountY = 0.14;
+      const finCount = Math.max(5, Math.min(14, Math.round(w / 0.075)));
+      const finW = 0.036;
+      return (
+        <group position={[0, mountY, 0]}>
+          {/* Elementi verticali del termosifone */}
+          {Array.from({ length: finCount }).map((_, idx) => {
+            const rx = -w / 2 + 0.04 + (idx / Math.max(1, finCount - 1)) * (w - 0.08);
+            return (
+              <mesh key={idx} position={[rx, h / 2, 0]} castShadow receiveShadow>
+                <boxGeometry args={[finW, h, d]} />
+                {mainMat}
+              </mesh>
+            );
+          })}
+          {/* Collettori orizzontali superiore e inferiore */}
+          <mesh position={[0, h - 0.06, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
+            <cylinderGeometry args={[0.022, 0.022, w - 0.04, 10]} />
+            {mainMat}
+          </mesh>
+          <mesh position={[0, 0.06, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
+            <cylinderGeometry args={[0.022, 0.022, w - 0.04, 10]} />
+            {mainMat}
+          </mesh>
+          {/* Valvola termostatica laterale */}
+          <mesh position={[w / 2 + 0.03, h - 0.06, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
+            <cylinderGeometry args={[0.02, 0.02, 0.06, 10]} />
+            {chromeMat}
+          </mesh>
+        </group>
+      );
+    }
+
+    case 'towel_warmer': {
+      const mountY = 0.9;
+      const bars = 10;
+      return (
+        <group position={[0, mountY, 0]}>
+          {/* Due montanti verticali */}
+          {[-w / 2 + 0.03, w / 2 - 0.03].map((px, i) => (
+            <mesh key={i} position={[px, h / 2, 0]} castShadow>
+              <cylinderGeometry args={[0.018, 0.018, h, 10]} />
+              {mainMat}
+            </mesh>
+          ))}
+          {/* Tubi orizzontali scaldasalviette */}
+          {Array.from({ length: bars }).map((_, idx) => {
+            const by = 0.08 + (idx / (bars - 1)) * (h - 0.16);
+            return (
+              <mesh key={idx} position={[0, by, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
+                <cylinderGeometry args={[0.011, 0.011, w - 0.06, 8]} />
+                {mainMat}
+              </mesh>
+            );
+          })}
         </group>
       );
     }

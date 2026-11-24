@@ -18,6 +18,7 @@ const CATEGORIES: ('Tutte' | FurnitureCategory)[] = [
   'Cucina',
   'Camera',
   'Bagno',
+  'Impianti',
   'Scale',
   'Altro',
 ];

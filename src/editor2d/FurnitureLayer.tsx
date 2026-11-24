@@ -255,8 +255,97 @@ const FurniturePlanDetail: React.FC<{
   if (t === 'boiler') {
     return (
       <>
-        <Circle x={0} y={0} radius={Math.min(hw, hd) * 0.45} stroke="#0284c7" strokeWidth={1.4} fill="rgba(14,165,233,0.12)" />
+        <Circle x={0} y={0} radius={Math.min(hw, hd) * 0.45} stroke="#f59e0b" strokeWidth={1.5} fill="rgba(245,158,11,0.14)" />
         <Line points={[-6, hd - 5, 6, hd - 5]} stroke="#ef4444" strokeWidth={2} />
+      </>
+    );
+  }
+
+  if (t === 'boiler_pellet') {
+    return (
+      <>
+        {/* Camera combustione */}
+        <Circle x={0} y={2} radius={Math.min(hw, hd) * 0.42} stroke="#ea580c" strokeWidth={1.6} fill="rgba(234,88,12,0.18)" />
+        {/* Canna fumaria posteriore Ø80 */}
+        <Circle x={0} y={-hd + 7} radius={5} stroke="#475569" strokeWidth={1.4} fill="#94a3b8" />
+        {/* Vetro frontale */}
+        <Line points={[-hw * 0.45, hd - 3, hw * 0.45, hd - 3]} stroke="#fb923c" strokeWidth={2.5} />
+      </>
+    );
+  }
+
+  if (t === 'heat_pump_monobloc' || t === 'heat_pump_split') {
+    const isMono = t === 'heat_pump_monobloc';
+    const accent = isMono ? '#0284c7' : '#0891b2';
+    const fanR = Math.min(hw * 0.34, hd * 0.65);
+    return (
+      <>
+        {/* Ventola frontale/centrale */}
+        <Circle x={-hw * 0.22} y={0} radius={fanR} stroke={accent} strokeWidth={1.4} fill="rgba(14,165,233,0.1)" />
+        <Line points={[-hw * 0.22 - fanR * 0.65, 0, -hw * 0.22 + fanR * 0.65, 0]} stroke={accent} strokeWidth={1.2} />
+        <Line points={[-hw * 0.22, -fanR * 0.65, -hw * 0.22, fanR * 0.65]} stroke={accent} strokeWidth={1.2} />
+        {/* Griglia scambiatore posteriore */}
+        <Line points={[-hw + 4, -hd + 4, hw - 4, -hd + 4]} stroke={stroke} strokeWidth={1.3} dash={[4, 3]} />
+        {/* Attacchi acqua (blu+rosso) per monoblocco o gas (ciano) per splittata */}
+        {isMono ? (
+          <>
+            <Circle x={hw - 10} y={-4} radius={3.5} fill="#0284c7" />
+            <Circle x={hw - 10} y={5} radius={3.5} fill="#ef4444" />
+          </>
+        ) : (
+          <>
+            <Circle x={hw - 10} y={-4} radius={3} fill="#06b6d4" />
+            <Circle x={hw - 10} y={5} radius={3} fill="#f59e0b" />
+          </>
+        )}
+      </>
+    );
+  }
+
+  if (t === 'ac_split_high' || t === 'ac_split_low') {
+    const isHigh = t === 'ac_split_high';
+    const accent = isHigh ? '#0284c7' : '#0d9488';
+    return (
+      <>
+        {/* Deflettore aria */}
+        <Line
+          points={[-hw + 6, hd - 4, hw - 6, hd - 4]}
+          stroke={accent}
+          strokeWidth={2}
+        />
+        {/* Frecce flusso aria */}
+        {[-hw * 0.45, 0, hw * 0.45].map((fx, idx) => (
+          <Line
+            key={idx}
+            points={[fx, hd, fx, hd + 6]}
+            stroke={accent}
+            strokeWidth={1.2}
+            dash={isHigh ? [2, 2] : undefined}
+            listening={false}
+          />
+        ))}
+      </>
+    );
+  }
+
+  if (t === 'radiator' || t === 'towel_warmer') {
+    const fins = Math.max(4, Math.min(12, Math.floor(w / 9)));
+    const accent = '#dc2626';
+    return (
+      <>
+        {Array.from({ length: fins }).map((_, idx) => {
+          const rx = -hw + 5 + (idx / Math.max(1, fins - 1)) * (w - 10);
+          return (
+            <Line
+              key={idx}
+              points={[rx, -hd + 2, rx, hd - 2]}
+              stroke={accent}
+              strokeWidth={1.3}
+              opacity={0.75}
+            />
+          );
+        })}
+        <Line points={[-hw + 3, 0, hw - 3, 0]} stroke={stroke} strokeWidth={1} opacity={0.5} />
       </>
     );
   }

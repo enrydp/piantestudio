@@ -27,6 +27,7 @@ import {
   Ruler,
   Sparkles,
   Square,
+  Thermometer,
   Trash2,
   ClipboardPaste,
   Columns2,
@@ -190,7 +191,7 @@ export const LeftToolbar: React.FC<LeftToolbarProps> = ({
         <>
           <ToolButton
             onClick={() => onTriggerUploadFloorplan?.()}
-            title="Carica o sostituisci immagine PNG/JPG o PDF della piantina"
+            title="Carica o sostituisci piantina PNG/JPG, PDF oppure CAD DWG/DXF"
             label="Carica"
             icon={<Upload className="w-4 h-4" />}
           />
@@ -432,6 +433,13 @@ export const LeftToolbar: React.FC<LeftToolbarProps> = ({
             title="Impianto Idraulico: tubi multistrato/PEX/rame e scarichi"
             label="Idraulico"
             icon={<Droplets className="w-4 h-4" />}
+          />
+          <ToolButton
+            active={mepTab === 'hvac'}
+            onClick={() => onChangeMepTab?.('hvac')}
+            title="Riscaldamento e Clima: PdC Monoblocco/Splittata, Caldaia Gas/Pellet, Split e Termosifoni"
+            label="Clima/Termo"
+            icon={<Thermometer className="w-4 h-4" />}
           />
           <ToolButton
             active={mepTab === 'paint'}

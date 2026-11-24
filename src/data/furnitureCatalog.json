@@ -289,12 +289,75 @@
   },
   {
     "id": "boiler",
-    "nome": "Caldaia murale",
-    "categoria": "Altro",
+    "nome": "Caldaia a gas murale",
+    "categoria": "Impianti",
     "dimensioni": { "width": 45, "depth": 35, "height": 78 },
     "coloreDefault": "#f1f5f9",
     "materialeDefault": "metal",
     "tipoGeometria": "boiler"
+  },
+  {
+    "id": "boiler-pellet",
+    "nome": "Caldaia / Stufa a pellet",
+    "categoria": "Impianti",
+    "dimensioni": { "width": 62, "depth": 65, "height": 125 },
+    "coloreDefault": "#7f1d1d",
+    "materialeDefault": "metal",
+    "tipoGeometria": "boiler_pellet"
+  },
+  {
+    "id": "heat-pump-monobloc",
+    "nome": "Pompa di calore Monoblocco (acqua)",
+    "categoria": "Impianti",
+    "dimensioni": { "width": 110, "depth": 44, "height": 95 },
+    "coloreDefault": "#e2e8f0",
+    "materialeDefault": "metal",
+    "tipoGeometria": "heat_pump_monobloc"
+  },
+  {
+    "id": "heat-pump-split",
+    "nome": "Pompa di calore Splittata (gas)",
+    "categoria": "Impianti",
+    "dimensioni": { "width": 90, "depth": 38, "height": 75 },
+    "coloreDefault": "#cbd5e1",
+    "materialeDefault": "metal",
+    "tipoGeometria": "heat_pump_split"
+  },
+  {
+    "id": "ac-split-high",
+    "nome": "Split a parete alto",
+    "categoria": "Impianti",
+    "dimensioni": { "width": 88, "depth": 22, "height": 30 },
+    "coloreDefault": "#f8fafc",
+    "materialeDefault": "matte",
+    "tipoGeometria": "ac_split_high"
+  },
+  {
+    "id": "ac-split-low",
+    "nome": "Split basso / Fan-coil",
+    "categoria": "Impianti",
+    "dimensioni": { "width": 82, "depth": 24, "height": 60 },
+    "coloreDefault": "#f1f5f9",
+    "materialeDefault": "matte",
+    "tipoGeometria": "ac_split_low"
+  },
+  {
+    "id": "radiator",
+    "nome": "Termosifone / Radiatore",
+    "categoria": "Impianti",
+    "dimensioni": { "width": 90, "depth": 12, "height": 70 },
+    "coloreDefault": "#f8fafc",
+    "materialeDefault": "metal",
+    "tipoGeometria": "radiator"
+  },
+  {
+    "id": "towel-warmer",
+    "nome": "Scaldasalviette / Termoarredo",
+    "categoria": "Impianti",
+    "dimensioni": { "width": 52, "depth": 10, "height": 125 },
+    "coloreDefault": "#f8fafc",
+    "materialeDefault": "metal",
+    "tipoGeometria": "towel_warmer"
   },
   {
     "id": "plant",

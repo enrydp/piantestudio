@@ -218,6 +218,7 @@ interface ProjectStore {
   // Step 0: Piantina, Calibrazione, Muri
   setFloorplan: (floorplan: FloorplanImage | null) => void;
   applyCroppedFloorplan: (cropped: FloorplanImage) => void;
+  applyCadImport: (floorplan: FloorplanImage, pixelsPerMeter: number, walls: Wall[]) => void;
   setFloorplanOpacity: (opacity: number) => void;
   setCalibrationPoint: (which: 'A' | 'B', ptImagePx: Point2D) => void;
   clearCalibrationPoints: () => void;
@@ -486,6 +487,33 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
       set({ showCropModal: false, activeTool: 'calibrate' });
       get().showToast(
         `Piantina aggiornata (${cropped.widthPx}×${cropped.heightPx} px)! Clicca due punti noti per calibrare.`,
+        'success'
+      );
+    },
+
+    applyCadImport: (floorplan, pixelsPerMeter, walls) => {
+      commit((p) => ({
+        ...p,
+        floorplan,
+        calibration: {
+          pointA: null,
+          pointB: null,
+          realLengthCm: null,
+          pixelsPerMeter,
+          isCalibrated: true,
+        },
+        walls: walls.length > 0 ? walls : p.walls,
+        openings: walls.length > 0 ? [] : p.openings,
+      }));
+      set({
+        activeTool: walls.length > 0 ? 'select' : 'wall',
+        selectedWallId: null,
+        selectedOpeningId: null,
+      });
+      get().showToast(
+        walls.length > 0
+          ? `File CAD importato in scala 1:1 con ${walls.length} muri automatici!`
+          : 'Piantina CAD importata in scala reale 1:1! Ora puoi tracciare i muri.',
         'success'
       );
     },

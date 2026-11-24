@@ -97,6 +97,7 @@ export type FurnitureCategory =
   | 'Cucina'
   | 'Camera'
   | 'Bagno'
+  | 'Impianti'
   | 'Scale'
   | 'Altro';
 
@@ -142,6 +143,13 @@ export type FurnitureGeometryType =
   | 'desk'
   | 'washing_machine'
   | 'boiler'
+  | 'boiler_pellet'
+  | 'heat_pump_monobloc'
+  | 'heat_pump_split'
+  | 'ac_split_high'
+  | 'ac_split_low'
+  | 'radiator'
+  | 'towel_warmer'
   | 'plant'
   | 'stairs_straight'
   | 'stairs_l'

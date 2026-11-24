@@ -399,7 +399,7 @@ export const RightPropertiesPanel: React.FC<RightPropertiesPanelProps> = ({
                     className="w-full py-2 px-3 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 font-medium flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <Upload className="w-3.5 h-3.5 text-blue-600" />
-                    Carica PNG / JPG / PDF
+                    Carica PNG / PDF / DWG / DXF
                   </button>
                   <button
                     type="button"

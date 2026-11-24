@@ -22,6 +22,7 @@ import {
   Paintbrush,
   Printer,
   Sparkles,
+  Thermometer,
   Zap,
 } from 'lucide-react';
 import { useProjectStore } from '../store/useProjectStore';
@@ -33,17 +34,21 @@ import {
   buildMepCsv,
   estimateMepAndPaint,
   getDefaultServicePoints,
+  isHvacGenerator,
+  isHvacTerminal,
   isWaterFixture,
   type CeiLevel,
+  type HvacGeneratorOverride,
   type MepConfig,
   type PaintType,
   type PipeMaterial,
+  type SplitFluidMode,
   type WallSidesMode,
 } from '../utils/mepEstimator';
 
 const GEMINI_KEY_STORAGE = 'piantestudio_gemini_api_key_v1';
 
-export type MepTabId = 'all' | 'electrical' | 'plumbing' | 'paint' | 'ai';
+export type MepTabId = 'all' | 'electrical' | 'plumbing' | 'hvac' | 'paint' | 'ai';
 
 interface MepEstimatorViewProps {
   activeTab: MepTabId;
@@ -75,6 +80,8 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
     manifoldPosition: defaults.manifoldPosition,
     includeHotWater: true,
     includeDrains: true,
+    hvacGeneratorOverride: 'auto',
+    splitFluidMode: 'auto',
     paintType: 'lavabile',
     wallSides: 'auto',
     coats: 2,
@@ -165,6 +172,12 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
           `<tr><td>${f.name}</td><td>${f.roomName}</td><td style="text-align:right">${f.coldPipeM} m</td><td style="text-align:right">${f.hotPipeM} m</td><td style="text-align:right">${f.drainPipeM} m (Ø${f.drainDiameterMm})</td></tr>`
       )
       .join('');
+    const hvacRows = estimate.hvac.terminals
+      .map(
+        (t) =>
+          `<tr><td>${t.name}</td><td>${t.roomName}</td><td>${t.pipeDescription}</td><td style="text-align:right"><strong>${t.pipeMeters} m</strong></td><td style="text-align:right">${t.condensateMeters > 0 ? `${t.condensateMeters} m` : '—'}</td></tr>`
+      )
+      .join('');
     const aiHtml = aiReport
       ? `<h2>Analisi Tecnica Google Gemini AI</h2><div style="white-space:pre-wrap;background:#f8fafc;border:1px solid #cbd5e1;padding:12px;border-radius:8px;font-size:12px;line-height:1.5">${aiReport.replace(/</g, '&lt;')}</div>`
       : '';
@@ -198,6 +211,9 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
       <h2>2. Impianto Idraulico (${estimate.plumbing.pipeMaterialLabel})</h2>
       <p style="font-size:12px">Acqua fredda Ø16: <strong>${estimate.plumbing.coldBranchMeters} m</strong> • Acqua calda Ø16: <strong>${estimate.plumbing.hotBranchMeters} m</strong> • Dorsale Ø20: <strong>${estimate.plumbing.mainSupplyMeters} m</strong> • Scarichi Ø40/50: <strong>${estimate.plumbing.drain40_50Meters} m</strong> • Scarichi Ø110: <strong>${estimate.plumbing.drain110Meters} m</strong></p>
       ${fixtureRows ? `<table><thead><tr><th>Utenza</th><th>Stanza</th><th>Fredda</th><th>Calda</th><th>Scarico</th></tr></thead><tbody>${fixtureRows}</tbody></table>` : '<p style="font-size:12px">Nessun sanitario/punto acqua posizionato in pianta.</p>'}
+      <h2>2B. Riscaldamento & Climatizzazione (${estimate.hvac.activeGeneratorSummary})</h2>
+      <p style="font-size:12px">Tubo riscaldamento/idronico (A+R): <strong>${estimate.hvac.heatingWaterPipeMeters} m</strong> (${estimate.hvac.heatingWaterPipeLabel}) • Dorsale PdC Monoblocco Ø26: <strong>${estimate.hvac.monoblocPrimaryPipeMeters} m</strong> • Rame frigo coibentato 1/4"+3/8": <strong>${estimate.hvac.refrigerantCopperPairMeters} m</strong> • Condensa Ø20: <strong>${estimate.hvac.condensateDrainMeters} m</strong> • Tubo Gas UNI 7129: <strong>${estimate.hvac.gasPipeMeters} m</strong> • Scarico fumi: <strong>${estimate.hvac.fluePipeMeters} m</strong> (${estimate.hvac.fluePipeLabel})</p>
+      ${hvacRows ? `<table><thead><tr><th>Terminale</th><th>Stanza</th><th>Tipo tubo</th><th>Lunghezza</th><th>Condensa</th></tr></thead><tbody>${hvacRows}</tbody></table>` : ''}
       <h2>3. Pittura Pareti (${PAINT_TYPE_PRESETS[config.paintType].label})</h2>
       <p style="font-size:12px">Pareti lorde: ${estimate.paint.grossWallSqm} m² • Aperture sottratte: -${estimate.paint.openingsSubtractedSqm} m² • Pareti nette: <strong>${estimate.paint.netWallSqm} m²</strong> • Soffitto: <strong>${estimate.paint.ceilingSqm} m²</strong> • Totale: <strong>${estimate.paint.totalSurfaceSqm} m²</strong> (${config.coats} mani)<br/>
       Vernice necessaria: <strong>${estimate.paint.paintKg} kg</strong> (${estimate.paint.paintLiters} L) → consigliati <strong>${estimate.paint.bucketCount} secchi da ${estimate.paint.bucketKg} kg</strong>${config.includePrimer ? ` • Fissativo: <strong>${estimate.paint.primerKg} kg</strong> (${estimate.paint.primerLiters} L)` : ''}.</p>
@@ -249,6 +265,16 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
             .join('\n')
         : '- Nessun sanitario posizionato ancora in pianta',
       `Totali idraulica: fredda Ø16 = ${estimate.plumbing.coldBranchMeters} m, calda Ø16 = ${estimate.plumbing.hotBranchMeters} m, dorsale Ø20 = ${estimate.plumbing.mainSupplyMeters} m, scarichi Ø40/50 = ${estimate.plumbing.drain40_50Meters} m, Ø110 = ${estimate.plumbing.drain110Meters} m`,
+      '',
+      `RISCALDAMENTO & CLIMATIZZAZIONE (${estimate.hvac.activeGeneratorSummary}):`,
+      `- Fluido split: ${estimate.hvac.splitFluid === 'water' ? 'Acqua (idronico/monoblocco)' : 'Gas refrigerante (splittata)'}`,
+      `- Tubo riscaldamento/idronico (A+R): ${estimate.hvac.heatingWaterPipeMeters} m (${estimate.hvac.heatingWaterPipeLabel})`,
+      `- Dorsale primaria PdC Monoblocco Ø26: ${estimate.hvac.monoblocPrimaryPipeMeters} m`,
+      `- Rame frigorifero coibentato (coppia 1/4" + 3/8"): ${estimate.hvac.refrigerantCopperPairMeters} m, condensa Ø20: ${estimate.hvac.condensateDrainMeters} m, cavo 4G1,5: ${estimate.hvac.commCable4g15Meters} m`,
+      `- Tubo Gas UNI 7129: ${estimate.hvac.gasPipeMeters} m, Fumi: ${estimate.hvac.fluePipeMeters} m (${estimate.hvac.fluePipeLabel})`,
+      estimate.hvac.terminals.length > 0
+        ? estimate.hvac.terminals.map((t) => `- Terminale: ${t.name} (${t.roomName}) → ${t.pipeMeters} m ${t.pipeDescription}`).join('\n')
+        : '- Nessun terminale clima/termosifone posizionato',
       '',
       `PITTURA (${PAINT_TYPE_PRESETS[config.paintType].label}, ${config.coats} mani):`,
       `- Pareti nette: ${estimate.paint.netWallSqm} m² (sottratti ${estimate.paint.openingsSubtractedSqm} m² di aperture), Soffitto: ${estimate.paint.ceilingSqm} m², Totale: ${estimate.paint.totalSurfaceSqm} m²`,
@@ -392,6 +418,7 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
 
   const showElectrical = activeTab === 'all' || activeTab === 'electrical';
   const showPlumbing = activeTab === 'all' || activeTab === 'plumbing';
+  const showHvac = activeTab === 'all' || activeTab === 'hvac';
   const showPaint = activeTab === 'all' || activeTab === 'paint';
   const showAi = activeTab === 'all' || activeTab === 'ai';
 
@@ -442,8 +469,8 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
           </div>
         )}
 
-        {/* 4 KPI principali */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {/* 5 KPI principali */}
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
           <button
             type="button"
             onClick={() => onChangeTab('electrical')}
@@ -453,11 +480,11 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
               <span className="text-[11px] font-semibold uppercase tracking-wider">Punti Elettrici</span>
               <Zap className="w-4 h-4" />
             </div>
-            <div className="text-xl font-bold text-slate-900 dark:text-white">
+            <div className="text-lg font-bold text-slate-900 dark:text-white">
               {estimate.electrical.totalLightPoints} luci • {estimate.electrical.totalOutlets} prese
             </div>
             <div className="text-[11px] text-slate-500 mt-0.5">
-              {estimate.electrical.totalCableMeters} m di cavo totali (+{config.wastePct}% sfrido)
+              {estimate.electrical.totalCableMeters} m cavi (+{config.wastePct}% sfrido)
             </div>
           </button>
 
@@ -470,11 +497,11 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
               <span className="text-[11px] font-semibold uppercase tracking-wider">Cavi & Corrugati</span>
               <Zap className="w-4 h-4" />
             </div>
-            <div className="text-xl font-bold text-slate-900 dark:text-white">
+            <div className="text-lg font-bold text-slate-900 dark:text-white">
               {estimate.electrical.totalCableMeters} m
             </div>
             <div className="text-[11px] text-slate-500 mt-0.5">
-              Corrugato Ø20: {estimate.electrical.corrugated20M} m • Ø25: {estimate.electrical.corrugated25M} m
+              Ø20: {estimate.electrical.corrugated20M} m • Ø25: {estimate.electrical.corrugated25M} m
             </div>
           </button>
 
@@ -485,15 +512,33 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
           >
             <div className="flex items-center justify-between text-sky-600 dark:text-sky-400 mb-1">
               <span className="text-[11px] font-semibold uppercase tracking-wider">
-                Tubi {config.pipeMaterial === 'multistrato' ? 'Multistrato' : config.pipeMaterial.toUpperCase()}
+                Idraulico ({config.pipeMaterial === 'multistrato' ? 'Multistr.' : config.pipeMaterial.toUpperCase()})
               </span>
               <Droplets className="w-4 h-4" />
             </div>
-            <div className="text-xl font-bold text-slate-900 dark:text-white">
+            <div className="text-lg font-bold text-slate-900 dark:text-white">
               {estimate.plumbing.totalSupplyMeters} m
             </div>
             <div className="text-[11px] text-slate-500 mt-0.5">
               {estimate.plumbing.fixtures.length} punti acqua • Scarichi {estimate.plumbing.totalDrainMeters} m
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onChangeTab('hvac')}
+            className="text-left p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-rose-400 transition-colors cursor-pointer shadow-xs"
+          >
+            <div className="flex items-center justify-between text-rose-600 dark:text-rose-400 mb-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wider">Clima & Termo</span>
+              <Thermometer className="w-4 h-4" />
+            </div>
+            <div className="text-lg font-bold text-slate-900 dark:text-white">
+              {estimate.hvac.heatingWaterPipeMeters + estimate.hvac.monoblocPrimaryPipeMeters} m H₂O /{' '}
+              {estimate.hvac.refrigerantCopperPairMeters} m gas
+            </div>
+            <div className="text-[11px] text-slate-500 mt-0.5 truncate">
+              {estimate.hvac.terminals.length} terminali • {estimate.hvac.generators.length} generatori
             </div>
           </button>
 
@@ -506,11 +551,11 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
               <span className="text-[11px] font-semibold uppercase tracking-wider">Vernice Pareti</span>
               <Paintbrush className="w-4 h-4" />
             </div>
-            <div className="text-xl font-bold text-slate-900 dark:text-white">
+            <div className="text-lg font-bold text-slate-900 dark:text-white">
               {estimate.paint.paintKg} kg
             </div>
             <div className="text-[11px] text-slate-500 mt-0.5">
-              {estimate.paint.paintLiters} L ({estimate.paint.bucketCount}×{estimate.paint.bucketKg} kg) • {estimate.paint.totalSurfaceSqm} m²
+              {estimate.paint.paintLiters} L ({estimate.paint.bucketCount}×{estimate.paint.bucketKg} kg)
             </div>
           </button>
         </div>
@@ -523,6 +568,7 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
                 { id: 'all', label: 'Tutto' },
                 { id: 'electrical', label: '⚡ Elettrico' },
                 { id: 'plumbing', label: '💧 Idraulico' },
+                { id: 'hvac', label: '🌡️ Clima & Riscaldamento' },
                 { id: 'paint', label: '🎨 Vernice' },
                 { id: 'ai', label: '✨ Analisi Google AI' },
               ] as { id: MepTabId; label: string }[]
@@ -559,7 +605,7 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
         </div>
 
         {/* Mini-pianta interattiva per posizionare Quadro Elettrico e Caldaia/Collettore */}
-        {activeWalls.length > 0 && (showElectrical || showPlumbing) && (
+        {activeWalls.length > 0 && (showElectrical || showPlumbing || showHvac) && (
           <section className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 grid grid-cols-1 lg:grid-cols-3 gap-4 items-center">
             <div className="space-y-2.5">
               <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
@@ -689,6 +735,43 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
                     cy={f.y}
                     r={0.18}
                     fill="#0ea5e9"
+                    stroke="#ffffff"
+                    strokeWidth={0.05}
+                  />
+                ))}
+
+                {/* Terminali clima e termosifoni */}
+                {project.furniture.filter(isHvacTerminal).map((f) => {
+                  const isRad = f.geometryType === 'radiator' || f.geometryType === 'towel_warmer';
+                  return (
+                    <circle
+                      key={`ht_${f.id}`}
+                      cx={f.x}
+                      cy={f.y}
+                      r={0.17}
+                      fill={isRad ? '#ef4444' : '#06b6d4'}
+                      stroke="#ffffff"
+                      strokeWidth={0.05}
+                    />
+                  );
+                })}
+
+                {/* Generatori (PdC Monoblocco/Splittata, Caldaia Gas/Pellet) */}
+                {project.furniture.filter(isHvacGenerator).map((f) => (
+                  <rect
+                    key={`hg_${f.id}`}
+                    x={f.x - 0.22}
+                    y={f.y - 0.22}
+                    width={0.44}
+                    height={0.44}
+                    rx={0.08}
+                    fill={
+                      f.geometryType === 'boiler_pellet'
+                        ? '#b91c1c'
+                        : f.geometryType === 'boiler'
+                          ? '#f97316'
+                          : '#0369a1'
+                    }
                     stroke="#ffffff"
                     strokeWidth={0.05}
                   />
@@ -1018,6 +1101,203 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
                           </td>
                           <td className="py-2 px-3 text-right font-mono text-slate-600 dark:text-slate-300">
                             {fx.drainPipeM > 0 ? `${fx.drainPipeM} m (Ø${fx.drainDiameterMm})` : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </section>
+        )}
+
+        {/* ================= 2B. RISCALDAMENTO & CLIMATIZZAZIONE ================= */}
+        {showHvac && (
+          <section className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center">
+                  <Thermometer className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold text-slate-900 dark:text-white">
+                    2B. Riscaldamento & Climatizzazione — PdC (Acqua/Gas), Caldaie, Split e Termosifoni
+                  </h2>
+                  <p className="text-[11px] text-slate-500">
+                    Generatore attivo: <strong>{estimate.hvac.activeGeneratorSummary}</strong>
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <select
+                  value={config.hvacGeneratorOverride}
+                  onChange={(e) =>
+                    setConfig((c) => ({
+                      ...c,
+                      hvacGeneratorOverride: e.target.value as HvacGeneratorOverride,
+                    }))
+                  }
+                  title="Scegli il generatore oppure lascialo in rilevamento automatico dalla piantina"
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-medium"
+                >
+                  <option value="auto">Generatore: Auto (da piantina)</option>
+                  <option value="hp_monobloc_water">PdC Monoblocco (circolazione acqua)</option>
+                  <option value="hp_split_gas">PdC Splittata (circolazione gas)</option>
+                  <option value="boiler_gas">Caldaia a Gas</option>
+                  <option value="boiler_pellet">Caldaia / Stufa a Pellet</option>
+                </select>
+
+                <select
+                  value={config.splitFluidMode}
+                  onChange={(e) =>
+                    setConfig((c) => ({
+                      ...c,
+                      splitFluidMode: e.target.value as SplitFluidMode,
+                    }))
+                  }
+                  title="Tipo di tubazione verso gli split a parete alti/bassi"
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-medium"
+                >
+                  <option value="auto">
+                    Split: Auto ({estimate.hvac.splitFluid === 'water' ? 'Acqua' : 'Gas rame'})
+                  </option>
+                  <option value="water">Split a circolazione Acqua (Multistrato coib.)</option>
+                  <option value="gas">Split a circolazione Gas (Rame 1/4&quot;+3/8&quot;)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Riepilogo tubazioni specifiche in base al sistema scelto */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 text-xs">
+              <div className="p-2.5 rounded-xl bg-rose-50/70 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800">
+                <div className="text-[11px] text-rose-700 dark:text-rose-300">
+                  Acqua Risc./Idronico (A+R)
+                </div>
+                <div className="text-base font-bold font-mono text-slate-900 dark:text-white">
+                  {estimate.hvac.heatingWaterPipeMeters} m
+                </div>
+                <div className="text-[10px] text-slate-500 truncate" title={estimate.hvac.heatingWaterPipeLabel}>
+                  {PIPE_MATERIAL_LABELS[config.pipeMaterial].label}
+                </div>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-sky-50/70 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800">
+                <div className="text-[11px] text-sky-700 dark:text-sky-300">
+                  Dorsale Monoblocco Ø26
+                </div>
+                <div className="text-base font-bold font-mono text-slate-900 dark:text-white">
+                  {estimate.hvac.monoblocPrimaryPipeMeters} m
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  {estimate.hvac.hasMonoblocWater ? 'Acqua coibentato (A+R)' : 'Solo con PdC Monoblocco'}
+                </div>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-cyan-50/70 dark:bg-cyan-950/30 border border-cyan-200 dark:border-cyan-800">
+                <div className="text-[11px] text-cyan-700 dark:text-cyan-300">
+                  Rame Frigo (1/4&quot;+3/8&quot;)
+                </div>
+                <div className="text-base font-bold font-mono text-slate-900 dark:text-white">
+                  {estimate.hvac.refrigerantCopperPairMeters} m
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  {estimate.hvac.refrigerantCopperPairMeters > 0
+                    ? `Coppia + 4G1,5 (${estimate.hvac.commCable4g15Meters} m)`
+                    : 'Solo con gas refrigerante'}
+                </div>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                <div className="text-[11px] text-slate-500">Scarico Condensa Ø20</div>
+                <div className="text-base font-bold font-mono text-slate-900 dark:text-white">
+                  {estimate.hvac.condensateDrainMeters} m
+                </div>
+                <div className="text-[10px] text-slate-400">Split / Fan-coil</div>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+                <div className="text-[11px] text-amber-700 dark:text-amber-300">
+                  Tubo Gas UNI 7129
+                </div>
+                <div className="text-base font-bold font-mono text-slate-900 dark:text-white">
+                  {estimate.hvac.gasPipeMeters} m
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  {estimate.hvac.hasBoilerGas ? 'Rame Ø18-22 / Giallo gas' : 'Solo con Caldaia a Gas'}
+                </div>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                <div className="text-[11px] text-slate-500">Fumi / Canna Fumaria</div>
+                <div className="text-base font-bold font-mono text-slate-900 dark:text-white">
+                  {estimate.hvac.fluePipeMeters > 0 ? `${estimate.hvac.fluePipeMeters} m` : '—'}
+                </div>
+                <div className="text-[10px] text-slate-400 truncate" title={estimate.hvac.fluePipeLabel}>
+                  {estimate.hvac.hasBoilerPellet
+                    ? 'Inox Ø80 (Pellet)'
+                    : estimate.hvac.hasBoilerGas
+                      ? 'Coassiale Ø60/100'
+                      : 'Nessuna'}
+                </div>
+              </div>
+            </div>
+
+            {estimate.hvac.terminals.length === 0 ? (
+              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-dashed border-slate-300 dark:border-slate-700 text-xs text-slate-500 text-center">
+                Nessuno split o termosifone posizionato in pianta. Vai nello <strong>Step 2 → categoria &ldquo;Impianti&rdquo;</strong> per inserire <strong>Split alti/bassi</strong>, <strong>Termosifoni</strong>, <strong>Scaldasalviette</strong>, <strong>Pompa di calore (Monoblocco o Splittata)</strong> e <strong>Caldaia (Gas o Pellet)</strong>.
+              </div>
+            ) : (
+              <>
+                {estimate.hvac.radiatorValveKits > 0 && (
+                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                    Accessori riscaldamento: <strong>{estimate.hvac.radiatorValveKits} kit valvola termostatica + detentore</strong> • Collettore riscaldamento consigliato:{' '}
+                    <strong>
+                      {estimate.hvac.terminals.filter((t) => t.circuitType === 'water').length} vie
+                    </strong>
+                    .
+                  </div>
+                )}
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 dark:bg-slate-800/70 text-slate-500">
+                        <th className="py-2 px-3 text-left rounded-l-lg">Terminale</th>
+                        <th className="py-2 px-3 text-left">Stanza</th>
+                        <th className="py-2 px-3 text-left">Tipo tubazione</th>
+                        <th className="py-2 px-3 text-right">Dist. generatore</th>
+                        <th className="py-2 px-3 text-right">Metri tubo</th>
+                        <th className="py-2 px-3 text-right rounded-r-lg">Condensa</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
+                      {estimate.hvac.terminals.map((t) => (
+                        <tr key={t.id}>
+                          <td className="py-2 px-3 font-medium text-slate-800 dark:text-slate-100">
+                            {t.name}
+                          </td>
+                          <td className="py-2 px-3 text-slate-500">{t.roomName}</td>
+                          <td className="py-2 px-3">
+                            <span
+                              className={`px-2 py-0.5 rounded-md text-[11px] font-medium ${
+                                t.circuitType === 'water'
+                                  ? 'bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300'
+                                  : 'bg-cyan-50 dark:bg-cyan-950/50 text-cyan-700 dark:text-cyan-300'
+                              }`}
+                            >
+                              {t.pipeDescription}
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono text-slate-500">
+                            {t.distanceM} m
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono font-bold text-slate-900 dark:text-white">
+                            {t.pipeMeters} m
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono text-slate-500">
+                            {t.condensateMeters > 0 ? `${t.condensateMeters} m` : '—'}
                           </td>
                         </tr>
                       ))}

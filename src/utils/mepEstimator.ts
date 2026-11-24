@@ -14,6 +14,13 @@ export type CeiLevel = 'livello1' | 'livello2' | 'livello3';
 export type PipeMaterial = 'multistrato' | 'pex' | 'ppr' | 'rame';
 export type PaintType = 'lavabile' | 'traspirante' | 'smalto_murale';
 export type WallSidesMode = 'auto' | 'single' | 'both';
+export type HvacGeneratorOverride =
+  | 'auto'
+  | 'hp_monobloc_water'
+  | 'hp_split_gas'
+  | 'boiler_gas'
+  | 'boiler_pellet';
+export type SplitFluidMode = 'auto' | 'water' | 'gas';
 
 export interface MepConfig {
   // Elettrico
@@ -26,6 +33,9 @@ export interface MepConfig {
   manifoldPosition: Point2D;
   includeHotWater: boolean;
   includeDrains: boolean;
+  // Riscaldamento & Climatizzazione (PdC Monoblocco / Splittata, Caldaia Gas / Pellet, Split, Termosifoni)
+  hvacGeneratorOverride: HvacGeneratorOverride;
+  splitFluidMode: SplitFluidMode;
   // Pittura / Vernice
   paintType: PaintType;
   wallSides: WallSidesMode;
@@ -89,6 +99,29 @@ export interface PlumbingFixtureItem {
   drainPipeM: number;
 }
 
+export interface HvacGeneratorItem {
+  id: string;
+  name: string;
+  kind: 'hp_monobloc' | 'hp_split' | 'boiler_gas' | 'boiler_pellet';
+  roomName: string;
+  x: number;
+  y: number;
+}
+
+export interface HvacTerminalItem {
+  id: string;
+  name: string;
+  kind: 'ac_split_high' | 'ac_split_low' | 'radiator' | 'towel_warmer';
+  roomName: string;
+  x: number;
+  y: number;
+  distanceM: number;
+  circuitType: 'water' | 'gas';
+  pipeDescription: string;
+  pipeMeters: number;
+  condensateMeters: number;
+}
+
 export interface MepEstimate {
   totalFloorAreaSqm: number;
   roomCount: number;
@@ -120,6 +153,34 @@ export interface MepEstimate {
     estimatedFittings: number;
     manifoldWaysCold: number;
     manifoldWaysHot: number;
+  };
+  hvac: {
+    generators: HvacGeneratorItem[];
+    terminals: HvacTerminalItem[];
+    activeGeneratorSummary: string;
+    splitFluid: 'water' | 'gas';
+    hasMonoblocWater: boolean;
+    hasSplitGas: boolean;
+    hasBoilerGas: boolean;
+    hasBoilerPellet: boolean;
+    /** Tubo riscaldamento / idronico (mandata + ritorno) in multistrato coibentato / PEX / PPR / rame */
+    heatingWaterPipeMeters: number;
+    heatingWaterPipeLabel: string;
+    /** Dorsale primaria coibentata Ø26 mm per Pompa di calore Monoblocco (mandata + ritorno) */
+    monoblocPrimaryPipeMeters: number;
+    /** Coppia tubi in rame frigorifero coibentato (Ø 1/4" + Ø 3/8") per PdC Splittata / Split a gas */
+    refrigerantCopperPairMeters: number;
+    /** Scarico condensa Ø 20 mm per split e PdC */
+    condensateDrainMeters: number;
+    /** Tubo Gas certificato UNI 7129 (rame Ø18-22 / multistrato giallo) per Caldaia a Gas */
+    gasPipeMeters: number;
+    /** Canna fumaria (Ø80 pellet o coassiale Ø60/100 gas) */
+    fluePipeMeters: number;
+    fluePipeLabel: string;
+    /** Cavo comunicazione / collegamento 4G1,5 mm² tra unità esterna e split */
+    commCable4g15Meters: number;
+    /** Valvole termostatiche + detentori per termosifoni/scaldasalviette */
+    radiatorValveKits: number;
   };
   paint: {
     grossWallSqm: number;
@@ -165,8 +226,13 @@ export function getDefaultServicePoints(
     };
   }
 
-  // Collettore / Caldaia: se è presente una caldaia murale usa la sua posizione esatta, altrimenti cucina o baricentro punti acqua
-  const boilerItem = project.furniture.find((f) => f.geometryType === 'boiler');
+  // Collettore / Caldaia: se è presente una caldaia (gas/pellet) o PdC monoblocco usa la sua posizione, altrimenti cucina o baricentro punti acqua
+  const boilerItem = project.furniture.find(
+    (f) =>
+      f.geometryType === 'boiler' ||
+      f.geometryType === 'boiler_pellet' ||
+      f.geometryType === 'heat_pump_monobloc'
+  );
   const waterFixtures = project.furniture.filter((f) => isWaterFixture(f));
   let manifoldPosition: Point2D = {
     x: Number((bounds.maxX - 0.6).toFixed(2)),
@@ -207,6 +273,24 @@ export function isWaterFixture(f: Furniture): boolean {
     f.geometryType === 'kitchen_peninsula' ||
     f.geometryType === 'kitchen_island' ||
     f.geometryType === 'washing_machine'
+  );
+}
+
+export function isHvacGenerator(f: Furniture): boolean {
+  return (
+    f.geometryType === 'boiler' ||
+    f.geometryType === 'boiler_pellet' ||
+    f.geometryType === 'heat_pump_monobloc' ||
+    f.geometryType === 'heat_pump_split'
+  );
+}
+
+export function isHvacTerminal(f: Furniture): boolean {
+  return (
+    f.geometryType === 'ac_split_high' ||
+    f.geometryType === 'ac_split_low' ||
+    f.geometryType === 'radiator' ||
+    f.geometryType === 'towel_warmer'
   );
 }
 
@@ -348,8 +432,12 @@ export function estimateMepAndPaint(
       dedicatedOutlets += countType('fridge');
     }
     dedicatedOutlets += countType('washing_machine');
-    dedicatedOutlets += countType('boiler');
-    if (
+    dedicatedOutlets += countType('boiler') + countType('boiler_pellet');
+    dedicatedOutlets += countType('heat_pump_monobloc') + countType('heat_pump_split');
+    const placedSplitsInRoom = countType('ac_split_high') + countType('ac_split_low');
+    if (placedSplitsInRoom > 0) {
+      dedicatedOutlets += placedSplitsInRoom;
+    } else if (
       config.includeAcLine &&
       (room.kind === 'soggiorno' ||
         room.kind === 'soggiorno_cucina' ||
@@ -415,6 +503,24 @@ export function estimateMepAndPaint(
     // Corrugati Ø20 (diramazioni) e Ø25 (dorsale dal quadro alla cassetta di stanza)
     corr20Raw += lightTubeM * 0.75 + fmTubeM * 0.7;
     corr25Raw += distPanel * 0.9;
+  }
+
+  // Linee elettriche dedicate per Pompe di Calore e Caldaie posizionate in pianta
+  const placedHeatPumps = project.furniture.filter(
+    (f) => f.geometryType === 'heat_pump_monobloc' || f.geometryType === 'heat_pump_split'
+  );
+  const placedBoilers = project.furniture.filter(
+    (f) => f.geometryType === 'boiler' || f.geometryType === 'boiler_pellet'
+  );
+  for (const hp of placedHeatPumps) {
+    const dist = Math.max(2.5, manhattan(config.panelPosition, { x: hp.x, y: hp.y })) + 2.5;
+    cable40Raw += dist * 3;
+    corr25Raw += dist;
+  }
+  for (const bl of placedBoilers) {
+    const dist = Math.max(2, manhattan(config.panelPosition, { x: bl.x, y: bl.y })) + 2.2;
+    cable25Raw += dist * 3;
+    corr20Raw += dist;
   }
 
   const totalLightPoints = byRoom.reduce((s, r) => s + r.lightPoints, 0);
@@ -564,6 +670,193 @@ export function estimateMepAndPaint(
   const estimatedFittings = (manifoldWaysCold + manifoldWaysHot) * 4 + (mainSupplyMeters > 0 ? 6 : 0);
 
   // =========================================================================
+  // 2B. RISCALDAMENTO & CLIMATIZZAZIONE (PdC Monoblocco acqua / Splittata gas, Caldaia Gas / Pellet, Split, Termosifoni)
+  // =========================================================================
+  const generators: HvacGeneratorItem[] = [];
+  for (const f of project.furniture) {
+    if (!isHvacGenerator(f)) continue;
+    const ownerRoom =
+      effectiveRooms.find((r) => r.furnitureIds.includes(f.id)) ??
+      effectiveRooms.find((r) => r.containsPoint(f.x, f.y));
+    const kind: HvacGeneratorItem['kind'] =
+      f.geometryType === 'heat_pump_monobloc'
+        ? 'hp_monobloc'
+        : f.geometryType === 'heat_pump_split'
+          ? 'hp_split'
+          : f.geometryType === 'boiler_pellet'
+            ? 'boiler_pellet'
+            : 'boiler_gas';
+    generators.push({
+      id: f.id,
+      name: f.name,
+      kind,
+      roomName: ownerRoom?.name ?? 'Esterno / Locale tecnico',
+      x: f.x,
+      y: f.y,
+    });
+  }
+
+  const hasMonoblocWater =
+    config.hvacGeneratorOverride === 'hp_monobloc_water' ||
+    (config.hvacGeneratorOverride === 'auto' &&
+      generators.some((g) => g.kind === 'hp_monobloc'));
+  const hasSplitGas =
+    config.hvacGeneratorOverride === 'hp_split_gas' ||
+    (config.hvacGeneratorOverride === 'auto' && generators.some((g) => g.kind === 'hp_split'));
+  const hasBoilerGas =
+    config.hvacGeneratorOverride === 'boiler_gas' ||
+    (config.hvacGeneratorOverride === 'auto' && generators.some((g) => g.kind === 'boiler_gas'));
+  const hasBoilerPellet =
+    config.hvacGeneratorOverride === 'boiler_pellet' ||
+    (config.hvacGeneratorOverride === 'auto' &&
+      generators.some((g) => g.kind === 'boiler_pellet'));
+
+  // Determina il fluido degli split (alti/bassi):
+  // - Se forzato dall'utente -> usa la scelta
+  // - In Auto: se è presente una PdC Monoblocco (acqua) senza PdC Splittata -> circolazione ad ACQUA (fan-coil idronici)
+  // - Altrimenti -> circolazione a GAS refrigerante (rame frigorifero coibentato 1/4" + 3/8")
+  const splitFluid: 'water' | 'gas' =
+    config.splitFluidMode === 'water'
+      ? 'water'
+      : config.splitFluidMode === 'gas'
+        ? 'gas'
+        : hasMonoblocWater && !hasSplitGas
+          ? 'water'
+          : 'gas';
+
+  const summaryParts: string[] = [];
+  if (hasMonoblocWater) summaryParts.push('PdC Monoblocco (acqua)');
+  if (hasSplitGas) summaryParts.push('PdC Splittata (gas)');
+  if (hasBoilerGas) summaryParts.push('Caldaia a Gas');
+  if (hasBoilerPellet) summaryParts.push('Caldaia / Stufa a Pellet');
+  const activeGeneratorSummary =
+    summaryParts.length > 0 ? summaryParts.join(' + ') : 'Nessun generatore posizionato (usa selettore o inseriscilo nello Step 2)';
+
+  const splitOutdoorAnchor: Point2D =
+    generators.find((g) => g.kind === 'hp_split') ??
+    generators.find((g) => g.kind === 'hp_monobloc') ??
+    config.manifoldPosition;
+
+  const waterHeatingAnchor: Point2D =
+    generators.find((g) => g.kind === 'hp_monobloc') ??
+    generators.find((g) => g.kind === 'boiler_gas') ??
+    generators.find((g) => g.kind === 'boiler_pellet') ??
+    config.manifoldPosition;
+
+  const heatingWaterPipeLabel = `${PIPE_MATERIAL_LABELS[config.pipeMaterial].label} coibentato Ø16/20 mm`;
+
+  const hvacTerminals: HvacTerminalItem[] = [];
+  let heatingWaterRaw = 0;
+  let refrigerantPairRaw = 0;
+  let condensateRaw = 0;
+  let commCableRaw = 0;
+  let radiatorValveKits = 0;
+
+  for (const f of project.furniture) {
+    if (!isHvacTerminal(f)) continue;
+    const ownerRoom =
+      effectiveRooms.find((r) => r.furnitureIds.includes(f.id)) ??
+      effectiveRooms.find((r) => r.containsPoint(f.x, f.y));
+
+    const kind = f.geometryType as HvacTerminalItem['kind'];
+    const isRadiator = kind === 'radiator' || kind === 'towel_warmer';
+    const circuitType: 'water' | 'gas' = isRadiator ? 'water' : splitFluid;
+
+    const anchor = circuitType === 'gas' ? splitOutdoorAnchor : waterHeatingAnchor;
+    const horizDist = Math.max(1.2, manhattan(anchor, { x: f.x, y: f.y }));
+
+    if (circuitType === 'water') {
+      // Andata + Ritorno (× 2) + salite verticali
+      const verticalPerLine = kind === 'ac_split_high' ? 2.5 : kind === 'towel_warmer' ? 1.5 : 1.0;
+      const twoWayMeters = Number(((horizDist + verticalPerLine) * 2 * wasteMult).toFixed(1));
+      const condMeters = isRadiator ? 0 : Number(((2.8 + horizDist * 0.35) * wasteMult).toFixed(1));
+      heatingWaterRaw += twoWayMeters;
+      condensateRaw += condMeters;
+      if (isRadiator) radiatorValveKits += 1;
+
+      hvacTerminals.push({
+        id: f.id,
+        name: f.name,
+        kind,
+        roomName: ownerRoom?.name ?? 'Ambiente',
+        x: f.x,
+        y: f.y,
+        distanceM: Number(horizDist.toFixed(1)),
+        circuitType: 'water',
+        pipeDescription: `${heatingWaterPipeLabel} (A+R)`,
+        pipeMeters: twoWayMeters,
+        condensateMeters: condMeters,
+      });
+    } else {
+      // Circolazione GAS refrigerante: coppia tubi rame coibentato (Ø 1/4" liquido + Ø 3/8" gas)
+      const verticalRun = kind === 'ac_split_high' ? 2.6 : 1.2;
+      const pairMeters = Number(((horizDist + verticalRun) * wasteMult).toFixed(1));
+      const condMeters = Number(((2.8 + horizDist * 0.35) * wasteMult).toFixed(1));
+      refrigerantPairRaw += pairMeters;
+      condensateRaw += condMeters;
+      commCableRaw += pairMeters;
+
+      hvacTerminals.push({
+        id: f.id,
+        name: f.name,
+        kind,
+        roomName: ownerRoom?.name ?? 'Ambiente',
+        x: f.x,
+        y: f.y,
+        distanceM: Number(horizDist.toFixed(1)),
+        circuitType: 'gas',
+        pipeDescription: 'Rame frigorifero coibentato (Ø 1/4" + 3/8")',
+        pipeMeters: pairMeters,
+        condensateMeters: condMeters,
+      });
+    }
+  }
+
+  // Dorsale primaria coibentata Ø26 mm (mandata + ritorno) per Pompa di calore Monoblocco
+  const monoblocGen = generators.find((g) => g.kind === 'hp_monobloc');
+  const monoblocPrimaryPipeMeters = hasMonoblocWater
+    ? Math.ceil(
+        (Math.max(3.5, monoblocGen ? manhattan(monoblocGen, config.manifoldPosition) : 4.5) + 1.5) *
+          2 *
+          wasteMult
+      )
+    : 0;
+
+  // Se l'utente ha selezionato PdC Splittata (gas) senza ancora posizionare gli split, stima una tratta minima verso unità interna
+  if (hasSplitGas && refrigerantPairRaw === 0) {
+    refrigerantPairRaw = Number((6 * wasteMult).toFixed(1));
+    condensateRaw += Number((3 * wasteMult).toFixed(1));
+    commCableRaw += Number((6 * wasteMult).toFixed(1));
+  }
+
+  // Tubo Gas certificato UNI 7129 (solo se Caldaia a Gas attiva)
+  const gasBoilerGen = generators.find((g) => g.kind === 'boiler_gas');
+  const gasPipeMeters = hasBoilerGas
+    ? Math.ceil(
+        (Math.max(
+          4,
+          manhattan(config.panelPosition, gasBoilerGen ?? config.manifoldPosition) * 0.9
+        ) +
+          2) *
+          wasteMult
+      )
+    : 0;
+
+  // Canna fumaria (Pellet Ø80 mm oppure Coassiale Ø60/100 mm per Caldaia a Gas)
+  let fluePipeMeters = 0;
+  let fluePipeLabel = 'Non richiesta (impianto elettrico PdC)';
+  if (hasBoilerPellet && hasBoilerGas) {
+    fluePipeMeters = 6;
+    fluePipeLabel = 'Canna fumaria Pellet Ø80 mm (4,5 m) + Scarico fumi Gas Ø60/100 (1,5 m)';
+  } else if (hasBoilerPellet) {
+    fluePipeMeters = 5;
+    fluePipeLabel = 'Canna fumaria inox doppia parete coibentata Ø 80 mm (Pellet)';
+  } else if (hasBoilerGas) {
+    fluePipeMeters = 2;
+    fluePipeLabel = 'Kit scarico fumi coassiale Ø 60/100 mm (Caldaia a Gas)';
+  }
+
+  // =========================================================================
   // 3. PITTURA / VERNICE PARETI (m² netti, litri, kg, secchi, fissativo)
   // =========================================================================
   const openingsByWall = new Map<string, Opening[]>();
@@ -643,6 +936,26 @@ export function estimateMepAndPaint(
       manifoldWaysCold,
       manifoldWaysHot,
     },
+    hvac: {
+      generators,
+      terminals: hvacTerminals,
+      activeGeneratorSummary,
+      splitFluid,
+      hasMonoblocWater,
+      hasSplitGas,
+      hasBoilerGas,
+      hasBoilerPellet,
+      heatingWaterPipeMeters: Math.ceil(heatingWaterRaw),
+      heatingWaterPipeLabel,
+      monoblocPrimaryPipeMeters,
+      refrigerantCopperPairMeters: Math.ceil(refrigerantPairRaw),
+      condensateDrainMeters: Math.ceil(condensateRaw),
+      gasPipeMeters,
+      fluePipeMeters,
+      fluePipeLabel,
+      commCable4g15Meters: Math.ceil(commCableRaw),
+      radiatorValveKits,
+    },
     paint: {
       grossWallSqm: Number(grossWallSqm.toFixed(1)),
       openingsSubtractedSqm: Number(openingsSubtractedSqm.toFixed(1)),
@@ -694,6 +1007,19 @@ export function buildMepCsv(estimate: MepEstimate, projectName: string): string 
     ['Tubi di scarico Ø 40/50 mm', 'Lavabi, docce, vasche, cucina, lavatrice', String(estimate.plumbing.drain40_50Meters), 'm'],
     ['Tubi di scarico Ø 110 mm', 'WC verso colonna', String(estimate.plumbing.drain110Meters), 'm'],
     ['Raccordi e terminali stimati', 'Curve, raccordi collettore, attacchi muro', String(estimate.plumbing.estimatedFittings), 'n.'],
+    [],
+    ['=== RISCALDAMENTO & CLIMATIZZAZIONE ==='],
+    ['Voce', 'Tipo tubo / Dettaglio', 'Quantità', 'Unità'],
+    ['Generatore attivo', estimate.hvac.activeGeneratorSummary, String(estimate.hvac.generators.length), 'n.'],
+    ['Terminali rilevati (split / termosifoni)', `Split a ${estimate.hvac.splitFluid === 'water' ? 'circolazione acqua' : 'gas refrigerante'}`, String(estimate.hvac.terminals.length), 'n.'],
+    ['Tubo riscaldamento / idronico (A+R)', estimate.hvac.heatingWaterPipeLabel, String(estimate.hvac.heatingWaterPipeMeters), 'm'],
+    ['Dorsale primaria PdC Monoblocco (A+R)', 'Multistrato / Rame coibentato Ø 26 mm', String(estimate.hvac.monoblocPrimaryPipeMeters), 'm'],
+    ['Tubo rame frigorifero coibentato (coppia)', 'Linea liquido Ø 1/4" + gas Ø 3/8" (PdC Splittata / Split)', String(estimate.hvac.refrigerantCopperPairMeters), 'm'],
+    ['Tubo scarico condensa Ø 20 mm', 'Per split a parete / fan-coil', String(estimate.hvac.condensateDrainMeters), 'm'],
+    ['Cavo comunicazione 4G1,5 mm²', 'Collegamento unità esterna ↔ split', String(estimate.hvac.commCable4g15Meters), 'm'],
+    ['Tubo Gas certificato UNI 7129', 'Rame Ø 18-22 / Multistrato giallo (Caldaia a Gas)', String(estimate.hvac.gasPipeMeters), 'm'],
+    ['Scarico fumi / Canna fumaria', estimate.hvac.fluePipeLabel, String(estimate.hvac.fluePipeMeters), 'm'],
+    ['Kit valvole + detentori radiatori', 'Per termosifoni e scaldasalviette', String(estimate.hvac.radiatorValveKits), 'kit'],
     [],
     ['=== PITTURA / VERNICE PARETI ==='],
     ['Voce', 'Dettaglio', 'Quantità', 'Unità'],
