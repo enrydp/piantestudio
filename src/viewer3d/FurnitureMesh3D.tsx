@@ -68,6 +68,411 @@ const ProceduralFurniture: React.FC<{ item: Furniture }> = ({ item }) => {
   const chromeMat = <meshStandardMaterial color="#cfd6de" roughness={0.22} metalness={0.85} />;
 
   switch (geometryType) {
+    case 'sofa_l': {
+      const legH = 0.08;
+      const baseH = h * 0.3;
+      const seatH = h * 0.16;
+      const backH = h - legH - baseH * 0.5;
+      const topD = Math.min(d * 0.54, 0.95);
+      const sideW = Math.min(w * 0.38, 0.95);
+      const backD = topD * 0.24;
+      const armW = 0.15;
+      const mx = item.mirrored ? -1 : 1;
+      const sideCenterX = mx * (-w / 2 + sideW / 2);
+      const chaiseLen = d - topD;
+
+      return (
+        <group>
+          {/* Base tratto principale lungo in alto (-Z) */}
+          <mesh position={[0, legH + baseH / 2, -d / 2 + topD / 2]} castShadow receiveShadow>
+            <boxGeometry args={[w, baseH, topD]} />
+            {mainMat}
+          </mesh>
+          {/* Base penisola / chaise longue */}
+          <mesh
+            position={[sideCenterX, legH + baseH / 2, -d / 2 + topD + chaiseLen / 2]}
+            castShadow
+            receiveShadow
+          >
+            <boxGeometry args={[sideW, baseH, chaiseLen]} />
+            {mainMat}
+          </mesh>
+          {/* Schienale lungo */}
+          <mesh
+            position={[0, legH + baseH * 0.5 + backH / 2, -d / 2 + backD / 2]}
+            castShadow
+            receiveShadow
+          >
+            <boxGeometry args={[w, backH, backD]} />
+            {mainMat}
+          </mesh>
+          {/* Bracciolo lato penisola */}
+          <mesh
+            position={[mx * (-w / 2 + armW / 2), legH + baseH + h * 0.14, backD * 0.35]}
+            castShadow
+            receiveShadow
+          >
+            <boxGeometry args={[armW, h * 0.32, d - backD * 0.7]} />
+            {mainMat}
+          </mesh>
+          {/* Bracciolo lato opposto */}
+          <mesh
+            position={[mx * (w / 2 - armW / 2), legH + baseH + h * 0.14, -d / 2 + topD / 2 + backD * 0.25]}
+            castShadow
+            receiveShadow
+          >
+            <boxGeometry args={[armW, h * 0.32, topD - backD * 0.6]} />
+            {mainMat}
+          </mesh>
+          {/* Cuscino seduta tratto principale */}
+          <mesh
+            position={[0, legH + baseH + seatH / 2, -d / 2 + backD + (topD - backD) / 2]}
+            castShadow
+            receiveShadow
+          >
+            <boxGeometry args={[w - armW * 2 - 0.02, seatH, topD - backD - 0.04]} />
+            <meshStandardMaterial color={color} roughness={0.95} />
+          </mesh>
+          {/* Cuscino penisola */}
+          <mesh
+            position={[sideCenterX + mx * (armW / 2), legH + baseH + seatH / 2, -d / 2 + topD + chaiseLen / 2 - 0.02]}
+            castShadow
+            receiveShadow
+          >
+            <boxGeometry args={[sideW - armW - 0.02, seatH, chaiseLen]} />
+            <meshStandardMaterial color={color} roughness={0.95} />
+          </mesh>
+          {/* Piedini */}
+          {[
+            [-w / 2 + 0.08, -d / 2 + 0.08],
+            [w / 2 - 0.08, -d / 2 + 0.08],
+            [mx * (w / 2 - 0.08), -d / 2 + topD - 0.08],
+            [mx * (-w / 2 + 0.08), d / 2 - 0.08],
+            [mx * (-w / 2 + sideW - 0.08), d / 2 - 0.08],
+          ].map(([lx, lz], idx) => (
+            <mesh key={idx} position={[lx, legH / 2, lz]} castShadow>
+              <cylinderGeometry args={[0.022, 0.018, legH, 8]} />
+              {legMat}
+            </mesh>
+          ))}
+        </group>
+      );
+    }
+
+    case 'sideboard': {
+      const legH = 0.16;
+      const bodyH = Math.max(0.3, h - legH);
+      return (
+        <group>
+          <mesh position={[0, legH + bodyH / 2, 0]} castShadow receiveShadow>
+            <boxGeometry args={[w, bodyH, d]} />
+            {mainMat}
+          </mesh>
+          {/* 3 maniglie ante */}
+          {[-w * 0.3, 0, w * 0.3].map((hx, i) => (
+            <mesh key={i} position={[hx, legH + bodyH * 0.65, d / 2 + 0.015]} castShadow>
+              <boxGeometry args={[0.02, 0.16, 0.022]} />
+              {chromeMat}
+            </mesh>
+          ))}
+          {[-w / 2 + 0.09, w / 2 - 0.09].map((lx, i) =>
+            [-d / 2 + 0.07, d / 2 - 0.07].map((lz, j) => (
+              <mesh key={`${i}_${j}`} position={[lx, legH / 2, lz]} castShadow>
+                <cylinderGeometry args={[0.018, 0.014, legH, 8]} />
+                {legMat}
+              </mesh>
+            ))
+          )}
+        </group>
+      );
+    }
+
+    case 'rug': {
+      const rugH = Math.max(0.012, Math.min(0.03, h));
+      return (
+        <mesh position={[0, rugH / 2, 0]} receiveShadow>
+          <boxGeometry args={[w, rugH, d]} />
+          <meshStandardMaterial color={color} roughness={0.96} metalness={0} />
+        </mesh>
+      );
+    }
+
+    case 'dining_table_round': {
+      const topT = 0.045;
+      const radius = Math.min(w, d) / 2;
+      const legH = h - topT;
+      return (
+        <group>
+          <mesh position={[0, h - topT / 2, 0]} castShadow receiveShadow>
+            <cylinderGeometry args={[radius, radius, topT, 32]} />
+            {mainMat}
+          </mesh>
+          {/* Basamento centrale + piede */}
+          <mesh position={[0, legH / 2, 0]} castShadow>
+            <cylinderGeometry args={[0.06, 0.08, legH, 16]} />
+            {legMat}
+          </mesh>
+          <mesh position={[0, 0.02, 0]} castShadow receiveShadow>
+            <cylinderGeometry args={[radius * 0.45, radius * 0.48, 0.04, 24]} />
+            {legMat}
+          </mesh>
+        </group>
+      );
+    }
+
+    case 'kitchen_l':
+    case 'kitchen_peninsula': {
+      const topT = 0.045;
+      const bodyH = h - topT;
+      const topD = Math.min(d * 0.42, 0.65);
+      const sideW = geometryType === 'kitchen_peninsula' ? Math.min(w * 0.34, 0.72) : Math.min(w * 0.36, 0.65);
+      const sideLen = d - topD;
+      const mx = item.mirrored ? -1 : 1;
+      const sideCenterX = mx * (-w / 2 + sideW / 2);
+      const worktopMat = <meshStandardMaterial color="#474c52" roughness={0.35} metalness={0.1} />;
+
+      return (
+        <group>
+          {/* Base lunga superiore (-Z) */}
+          <mesh position={[0, bodyH / 2, -d / 2 + topD / 2]} castShadow receiveShadow>
+            <boxGeometry args={[w, bodyH, topD - 0.02]} />
+            {mainMat}
+          </mesh>
+          {/* Top lungo superiore */}
+          <mesh position={[0, h - topT / 2, -d / 2 + topD / 2]} castShadow receiveShadow>
+            <boxGeometry args={[w + 0.02, topT, topD]} />
+            {worktopMat}
+          </mesh>
+
+          {/* Base ala laterale / penisola */}
+          <mesh
+            position={[sideCenterX, bodyH / 2, -d / 2 + topD + sideLen / 2]}
+            castShadow
+            receiveShadow
+          >
+            <boxGeometry args={[sideW - 0.02, bodyH, sideLen]} />
+            {mainMat}
+          </mesh>
+          {/* Top ala laterale / penisola */}
+          <mesh
+            position={[sideCenterX, h - topT / 2, -d / 2 + topD + sideLen / 2]}
+            castShadow
+            receiveShadow
+          >
+            <boxGeometry args={[sideW + (geometryType === 'kitchen_peninsula' ? 0.14 : 0.02), topT, sideLen + 0.02]} />
+            {worktopMat}
+          </mesh>
+
+          {/* Lavello + rubinetto sul lato lungo */}
+          <mesh position={[mx * (w * 0.22), h + 0.005, -d / 2 + topD / 2]}>
+            <boxGeometry args={[Math.min(0.65, w * 0.25), 0.015, topD * 0.68]} />
+            {chromeMat}
+          </mesh>
+          <mesh position={[mx * (w * 0.22), h + 0.14, -d / 2 + 0.12]} castShadow>
+            <cylinderGeometry args={[0.015, 0.018, 0.28, 10]} />
+            {chromeMat}
+          </mesh>
+
+          {/* Piano cottura sull'ala laterale */}
+          <mesh position={[sideCenterX, h + 0.006, -d / 2 + topD + sideLen * 0.45]}>
+            <boxGeometry args={[sideW * 0.72, 0.012, Math.min(0.62, sideLen * 0.5)]} />
+            <meshStandardMaterial color="#181b20" roughness={0.2} metalness={0.5} />
+          </mesh>
+
+          {/* Pensili superiori lungo il lato principale */}
+          <mesh position={[0, h + 0.92, -d / 2 + 0.18]} castShadow receiveShadow>
+            <boxGeometry args={[w, 0.72, 0.34]} />
+            {mainMat}
+          </mesh>
+          {/* Pensili laterali solo per cucina ad angolo (non su penisola aperta) */}
+          {geometryType === 'kitchen_l' && (
+            <mesh
+              position={[mx * (-w / 2 + 0.18), h + 0.92, -d / 2 + topD + sideLen / 2]}
+              castShadow
+              receiveShadow
+            >
+              <boxGeometry args={[0.34, 0.72, sideLen]} />
+              {mainMat}
+            </mesh>
+          )}
+        </group>
+      );
+    }
+
+    case 'fridge': {
+      return (
+        <group>
+          <mesh position={[0, h / 2, 0]} castShadow receiveShadow>
+            <boxGeometry args={[w, h, d]} />
+            {mainMat}
+          </mesh>
+          {/* Fessura divisoria frigo / congelatore */}
+          <mesh position={[0, h * 0.34, d / 2 + 0.005]}>
+            <boxGeometry args={[w * 0.96, 0.012, 0.01]} />
+            <meshStandardMaterial color="#334155" roughness={0.4} />
+          </mesh>
+          {/* Maniglie */}
+          <mesh position={[-w * 0.36, h * 0.56, d / 2 + 0.022]} castShadow>
+            <boxGeometry args={[0.022, 0.42, 0.032]} />
+            {chromeMat}
+          </mesh>
+          <mesh position={[-w * 0.36, h * 0.22, d / 2 + 0.022]} castShadow>
+            <boxGeometry args={[0.022, 0.26, 0.032]} />
+            {chromeMat}
+          </mesh>
+        </group>
+      );
+    }
+
+    case 'bed_bunk': {
+      const postR = 0.035;
+      const lowY = 0.32;
+      const highY = h - 0.45;
+      return (
+        <group>
+          {/* 4 montanti verticali */}
+          {[-w / 2 + postR, w / 2 - postR].map((px, i) =>
+            [-d / 2 + postR, d / 2 - postR].map((pz, j) => (
+              <mesh key={`${i}_${j}`} position={[px, h / 2, pz]} castShadow receiveShadow>
+                <boxGeometry args={[postR * 2, h, postR * 2]} />
+                {mainMat}
+              </mesh>
+            ))
+          )}
+          {/* Letto inferiore + materasso */}
+          <mesh position={[0, lowY, 0]} castShadow receiveShadow>
+            <boxGeometry args={[w - 0.06, 0.18, d - 0.08]} />
+            <meshStandardMaterial color="#dce4ec" roughness={0.92} />
+          </mesh>
+          {/* Letto superiore + materasso */}
+          <mesh position={[0, highY, 0]} castShadow receiveShadow>
+            <boxGeometry args={[w - 0.06, 0.18, d - 0.08]} />
+            <meshStandardMaterial color="#dce4ec" roughness={0.92} />
+          </mesh>
+          {/* Sponda di protezione letto superiore */}
+          <mesh position={[-w / 2 + 0.02, highY + 0.24, 0]} castShadow>
+            <boxGeometry args={[0.03, 0.22, d - 0.1]} />
+            {mainMat}
+          </mesh>
+          <mesh position={[w / 2 - 0.02, highY + 0.24, -d * 0.15]} castShadow>
+            <boxGeometry args={[0.03, 0.22, d * 0.65]} />
+            {mainMat}
+          </mesh>
+          {/* Scaletta laterale */}
+          {[0.3, 0.6, 0.9, 1.2].map((ry, idx) => (
+            <mesh key={idx} position={[w / 2 + 0.02, ry, d * 0.24]} castShadow>
+              <boxGeometry args={[0.04, 0.03, 0.34]} />
+              {legMat}
+            </mesh>
+          ))}
+        </group>
+      );
+    }
+
+    case 'wardrobe_corner': {
+      const topD = Math.min(d * 0.45, 0.6);
+      const sideW = Math.min(w * 0.35, 0.6);
+      const sideLen = d - topD;
+      const mx = item.mirrored ? -1 : 1;
+      const sideCenterX = mx * (-w / 2 + sideW / 2);
+      return (
+        <group>
+          <mesh position={[0, h / 2, -d / 2 + topD / 2]} castShadow receiveShadow>
+            <boxGeometry args={[w, h, topD]} />
+            {mainMat}
+          </mesh>
+          <mesh
+            position={[sideCenterX, h / 2, -d / 2 + topD + sideLen / 2]}
+            castShadow
+            receiveShadow
+          >
+            <boxGeometry args={[sideW, h, sideLen]} />
+            {mainMat}
+          </mesh>
+          {/* Maniglie */}
+          <mesh position={[mx * (w * 0.18), h * 0.5, -d / 2 + topD + 0.015]} castShadow>
+            <boxGeometry args={[0.02, 0.42, 0.025]} />
+            {chromeMat}
+          </mesh>
+          <mesh
+            position={[mx * (-w / 2 + sideW + 0.015), h * 0.5, -d / 2 + topD + sideLen * 0.5]}
+            castShadow
+          >
+            <boxGeometry args={[0.025, 0.42, 0.02]} />
+            {chromeMat}
+          </mesh>
+        </group>
+      );
+    }
+
+    case 'bidet': {
+      return (
+        <group>
+          <mesh position={[0, h * 0.48, 0.03]} castShadow receiveShadow>
+            <cylinderGeometry args={[w * 0.46, w * 0.34, h * 0.96, 16]} />
+            {mainMat}
+          </mesh>
+          <mesh position={[0, h + 0.06, -d * 0.28]} castShadow>
+            <cylinderGeometry args={[0.014, 0.018, 0.12, 10]} />
+            {chromeMat}
+          </mesh>
+        </group>
+      );
+    }
+
+    case 'bathroom_vanity': {
+      return (
+        <group>
+          {/* Mobile base */}
+          <mesh position={[0, h * 0.42, 0]} castShadow receiveShadow>
+            <boxGeometry args={[w * 0.96, h * 0.78, d * 0.92]} />
+            {mainMat}
+          </mesh>
+          {/* Top doppio lavabo in ceramica */}
+          <mesh position={[0, h * 0.88, 0]} castShadow receiveShadow>
+            <boxGeometry args={[w, h * 0.14, d]} />
+            <meshStandardMaterial color="#f8fafc" roughness={0.18} metalness={0.05} />
+          </mesh>
+          {/* Due rubinetti */}
+          {[-w * 0.27, w * 0.27].map((rx, i) => (
+            <mesh key={i} position={[rx, h + 0.07, -d * 0.32]} castShadow>
+              <cylinderGeometry args={[0.014, 0.018, 0.15, 10]} />
+              {chromeMat}
+            </mesh>
+          ))}
+          {/* Specchio sopra il mobile bagno */}
+          <mesh position={[0, h + 0.62, -d / 2 + 0.02]} castShadow>
+            <boxGeometry args={[w * 0.92, 0.78, 0.025]} />
+            <meshStandardMaterial color="#dbeafe" roughness={0.08} metalness={0.85} />
+          </mesh>
+        </group>
+      );
+    }
+
+    case 'boiler': {
+      return (
+        <group>
+          {/* Caldaia murale montata in alto */}
+          <mesh position={[0, 1.35 + h / 2, 0]} castShadow receiveShadow>
+            <boxGeometry args={[w, h, d]} />
+            {mainMat}
+          </mesh>
+          {/* Display frontale */}
+          <mesh position={[0, 1.35 + h * 0.28, d / 2 + 0.006]}>
+            <boxGeometry args={[w * 0.45, 0.09, 0.01]} />
+            <meshStandardMaterial color="#0f172a" roughness={0.2} />
+          </mesh>
+          {/* Tubi inferiori */}
+          {[-0.1, -0.04, 0.04, 0.1].map((tx, i) => (
+            <mesh key={i} position={[tx, 1.2, 0]} castShadow>
+              <cylinderGeometry args={[0.01, 0.01, 0.32, 8]} />
+              {chromeMat}
+            </mesh>
+          ))}
+        </group>
+      );
+    }
+
     case 'sofa_2':
     case 'sofa_3':
     case 'armchair': {

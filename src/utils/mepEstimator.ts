@@ -165,15 +165,22 @@ export function getDefaultServicePoints(
     };
   }
 
-  // Collettore / Caldaia: baricentro dei punti acqua (cucina/bagni) se presenti, altrimenti angolo in alto a destra
+  // Collettore / Caldaia: se è presente una caldaia murale usa la sua posizione esatta, altrimenti cucina o baricentro punti acqua
+  const boilerItem = project.furniture.find((f) => f.geometryType === 'boiler');
   const waterFixtures = project.furniture.filter((f) => isWaterFixture(f));
   let manifoldPosition: Point2D = {
     x: Number((bounds.maxX - 0.6).toFixed(2)),
     y: Number((bounds.minY + 0.6).toFixed(2)),
   };
-  if (waterFixtures.length > 0) {
+  if (boilerItem) {
+    manifoldPosition = { x: Number(boilerItem.x.toFixed(2)), y: Number(boilerItem.y.toFixed(2)) };
+  } else if (waterFixtures.length > 0) {
     const kitchen = waterFixtures.find(
-      (f) => f.geometryType === 'kitchen_linear' || f.geometryType === 'kitchen_island'
+      (f) =>
+        f.geometryType === 'kitchen_linear' ||
+        f.geometryType === 'kitchen_l' ||
+        f.geometryType === 'kitchen_peninsula' ||
+        f.geometryType === 'kitchen_island'
     );
     if (kitchen) {
       manifoldPosition = { x: Number(kitchen.x.toFixed(2)), y: Number(kitchen.y.toFixed(2)) };
@@ -190,10 +197,14 @@ export function getDefaultServicePoints(
 export function isWaterFixture(f: Furniture): boolean {
   return (
     f.geometryType === 'sink' ||
+    f.geometryType === 'bathroom_vanity' ||
     f.geometryType === 'wc' ||
+    f.geometryType === 'bidet' ||
     f.geometryType === 'shower' ||
     f.geometryType === 'bathtub' ||
     f.geometryType === 'kitchen_linear' ||
+    f.geometryType === 'kitchen_l' ||
+    f.geometryType === 'kitchen_peninsula' ||
     f.geometryType === 'kitchen_island' ||
     f.geometryType === 'washing_machine'
   );
@@ -324,12 +335,20 @@ export function estimateMepAndPaint(
 
     // Prese dedicate (elettrodomestici di potenza)
     let dedicatedOutlets = 0;
-    const hasKitchen = countType('kitchen_linear') + countType('kitchen_island') > 0;
+    const hasKitchen =
+      countType('kitchen_linear') +
+        countType('kitchen_l') +
+        countType('kitchen_peninsula') +
+        countType('kitchen_island') >
+      0;
     if (hasKitchen) {
       dedicatedOutlets += 3; // frigorifero, forno, lavastoviglie/cappa
       if (config.includeInduction) dedicatedOutlets += 1;
+    } else if (countType('fridge') > 0) {
+      dedicatedOutlets += countType('fridge');
     }
     dedicatedOutlets += countType('washing_machine');
+    dedicatedOutlets += countType('boiler');
     if (
       config.includeAcLine &&
       (room.kind === 'soggiorno' ||
@@ -468,15 +487,23 @@ export function estimateMepAndPaint(
     const needsHot =
       config.includeHotWater &&
       (f.geometryType === 'sink' ||
+        f.geometryType === 'bathroom_vanity' ||
+        f.geometryType === 'bidet' ||
         f.geometryType === 'shower' ||
         f.geometryType === 'bathtub' ||
         f.geometryType === 'kitchen_linear' ||
+        f.geometryType === 'kitchen_l' ||
+        f.geometryType === 'kitchen_peninsula' ||
         f.geometryType === 'kitchen_island');
 
     const drainDiameterMm: 40 | 50 | 110 =
       f.geometryType === 'wc'
         ? 110
-        : f.geometryType === 'kitchen_linear' || f.geometryType === 'kitchen_island' || f.geometryType === 'washing_machine'
+        : f.geometryType === 'kitchen_linear' ||
+            f.geometryType === 'kitchen_l' ||
+            f.geometryType === 'kitchen_peninsula' ||
+            f.geometryType === 'kitchen_island' ||
+            f.geometryType === 'washing_machine'
           ? 50
           : 40;
 

@@ -1182,6 +1182,44 @@ export const RightPropertiesPanel: React.FC<RightPropertiesPanelProps> = ({
                   </div>
                 )}
 
+                {/* Scelta lato angolo / penisola per mobili a L */}
+                {(selectedFurniture.geometryType === 'kitchen_l' ||
+                  selectedFurniture.geometryType === 'kitchen_peninsula' ||
+                  selectedFurniture.geometryType === 'sofa_l' ||
+                  selectedFurniture.geometryType === 'wardrobe_corner') && (
+                  <div className="space-y-1">
+                    <span className="text-[11px] text-slate-500">Lato angolo / penisola</span>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {(
+                        [
+                          { value: false, label: 'Sinistra' },
+                          { value: true, label: 'Destra' },
+                        ] as const
+                      ).map((opt) => {
+                        const active = Boolean(selectedFurniture.mirrored) === opt.value;
+                        return (
+                          <button
+                            key={String(opt.value)}
+                            type="button"
+                            onClick={() =>
+                              updateFurniture(selectedFurniture.id, {
+                                mirrored: opt.value,
+                              })
+                            }
+                            className={`py-1.5 px-2 rounded-lg text-[11px] font-semibold border transition-colors cursor-pointer ${
+                              active
+                                ? 'bg-blue-600 text-white border-blue-600'
+                                : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 {/* Colore e Materiale */}
                 <div className="space-y-1.5">
                   <span className="text-[11px] text-slate-500">Colore</span>
@@ -1259,7 +1297,7 @@ export const RightPropertiesPanel: React.FC<RightPropertiesPanelProps> = ({
                   <label className="space-y-1">
                     <span className="text-[10px] text-slate-500">Alt. (cm)</span>
                     <CmNumberInput
-                      min={15}
+                      min={1}
                       max={300}
                       value={metersToCm(selectedFurniture.height)}
                       onChangeValue={(cm) =>

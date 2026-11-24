@@ -111,25 +111,37 @@ export type FurnitureMaterial =
 export type FurnitureGeometryType =
   | 'sofa_2'
   | 'sofa_3'
+  | 'sofa_l'
   | 'armchair'
   | 'coffee_table'
   | 'tv_stand'
   | 'bookshelf'
+  | 'sideboard'
+  | 'rug'
   | 'kitchen_linear'
+  | 'kitchen_l'
+  | 'kitchen_peninsula'
   | 'kitchen_island'
+  | 'fridge'
   | 'dining_table'
+  | 'dining_table_round'
   | 'chair'
   | 'bed_single'
   | 'bed_double'
+  | 'bed_bunk'
   | 'nightstand'
   | 'wardrobe'
+  | 'wardrobe_corner'
   | 'dresser'
   | 'sink'
+  | 'bathroom_vanity'
   | 'wc'
+  | 'bidet'
   | 'shower'
   | 'bathtub'
   | 'desk'
   | 'washing_machine'
+  | 'boiler'
   | 'plant'
   | 'stairs_straight'
   | 'stairs_l'
@@ -183,6 +195,8 @@ export interface Furniture {
   material: FurnitureMaterial;
   /** Lato della prima rampa per le scale a L e a U ('left' | 'right') */
   stairsFirstFlight?: StairsFirstFlight;
+  /** Specchia orizzontalmente mobili ad angolo/penisola (es. cucina ad L, divano angolare, armadio angolare) */
+  mirrored?: boolean;
   /** URL / Data URL opzionale di un modello .glb personalizzato */
   customGlbUrl?: string;
   /** Nome file del modello .glb personalizzato */

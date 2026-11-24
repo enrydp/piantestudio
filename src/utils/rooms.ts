@@ -228,11 +228,25 @@ function classifyRoomFromFurniture(items: Furniture[]): {
 } {
   const types = new Set(items.map((f) => f.geometryType));
   const hasBath =
-    types.has('wc') || types.has('shower') || types.has('bathtub') || types.has('sink');
-  const hasKitchen = types.has('kitchen_linear') || types.has('kitchen_island');
-  const hasSofa = types.has('sofa_2') || types.has('sofa_3') || types.has('tv_stand');
+    types.has('wc') ||
+    types.has('bidet') ||
+    types.has('shower') ||
+    types.has('bathtub') ||
+    types.has('sink') ||
+    types.has('bathroom_vanity');
+  const hasKitchen =
+    types.has('kitchen_linear') ||
+    types.has('kitchen_l') ||
+    types.has('kitchen_peninsula') ||
+    types.has('kitchen_island') ||
+    types.has('fridge');
+  const hasSofa =
+    types.has('sofa_2') ||
+    types.has('sofa_3') ||
+    types.has('sofa_l') ||
+    types.has('tv_stand');
   const hasDoubleBed = types.has('bed_double');
-  const hasSingleBed = types.has('bed_single');
+  const hasSingleBed = types.has('bed_single') || types.has('bed_bunk');
   const hasStudy = types.has('desk') || types.has('bookshelf');
   const hasStairs =
     types.has('stairs_straight') || types.has('stairs_l') || types.has('stairs_u');

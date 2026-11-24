@@ -223,9 +223,11 @@ export function detectFurnitureCollisions(
   const conflicts: Record<string, string> = {};
   const polys = furniture.map((f) => getFurnitureCorners(f, 0.015));
 
-  // Controllo sovrapposizione mobile-mobile
+  // Controllo sovrapposizione mobile-mobile (esclude tappeti a terra e caldaie sospese a parete)
   for (let i = 0; i < furniture.length; i++) {
+    if (furniture[i].geometryType === 'rug' || furniture[i].geometryType === 'boiler') continue;
     for (let j = i + 1; j < furniture.length; j++) {
+      if (furniture[j].geometryType === 'rug' || furniture[j].geometryType === 'boiler') continue;
       if (polygonsOverlap(polys[i], polys[j])) {
         conflicts[furniture[i].id] = `Sovrapposto a ${furniture[j].name}`;
         conflicts[furniture[j].id] = `Sovrapposto a ${furniture[i].name}`;
@@ -249,6 +251,7 @@ export function detectFurnitureCollisions(
   }
 
   for (let i = 0; i < furniture.length; i++) {
+    if (furniture[i].geometryType === 'rug' || furniture[i].geometryType === 'boiler') continue;
     for (const door of doorClearances) {
       if (polygonsOverlap(polys[i], door.poly)) {
         conflicts[furniture[i].id] = `Blocca apertura ${door.label}`;

@@ -18,6 +18,15 @@
     "tipoGeometria": "sofa_3"
   },
   {
+    "id": "sofa-l",
+    "nome": "Divano ad angolo (penisola)",
+    "categoria": "Soggiorno",
+    "dimensioni": { "width": 250, "depth": 165, "height": 84 },
+    "coloreDefault": "#54687c",
+    "materialeDefault": "fabric",
+    "tipoGeometria": "sofa_l"
+  },
+  {
     "id": "armchair",
     "nome": "Poltrona",
     "categoria": "Soggiorno",
@@ -45,6 +54,15 @@
     "tipoGeometria": "tv_stand"
   },
   {
+    "id": "sideboard",
+    "nome": "Madia / Credenza",
+    "categoria": "Soggiorno",
+    "dimensioni": { "width": 180, "depth": 45, "height": 82 },
+    "coloreDefault": "#a67c52",
+    "materialeDefault": "wood",
+    "tipoGeometria": "sideboard"
+  },
+  {
     "id": "bookshelf",
     "nome": "Libreria",
     "categoria": "Soggiorno",
@@ -52,6 +70,15 @@
     "coloreDefault": "#9c7048",
     "materialeDefault": "wood",
     "tipoGeometria": "bookshelf"
+  },
+  {
+    "id": "rug",
+    "nome": "Tappeto",
+    "categoria": "Soggiorno",
+    "dimensioni": { "width": 240, "depth": 170, "height": 2 },
+    "coloreDefault": "#d8cfc2",
+    "materialeDefault": "fabric",
+    "tipoGeometria": "rug"
   },
   {
     "id": "kitchen-linear",
@@ -63,6 +90,24 @@
     "tipoGeometria": "kitchen_linear"
   },
   {
+    "id": "kitchen-l",
+    "nome": "Cucina ad angolo (L)",
+    "categoria": "Cucina",
+    "dimensioni": { "width": 260, "depth": 185, "height": 90 },
+    "coloreDefault": "#e6e2da",
+    "materialeDefault": "matte",
+    "tipoGeometria": "kitchen_l"
+  },
+  {
+    "id": "kitchen-peninsula",
+    "nome": "Cucina con penisola",
+    "categoria": "Cucina",
+    "dimensioni": { "width": 280, "depth": 175, "height": 90 },
+    "coloreDefault": "#ddd8ce",
+    "materialeDefault": "matte",
+    "tipoGeometria": "kitchen_peninsula"
+  },
+  {
     "id": "kitchen-island",
     "nome": "Isola cucina",
     "categoria": "Cucina",
@@ -72,6 +117,15 @@
     "tipoGeometria": "kitchen_island"
   },
   {
+    "id": "fridge",
+    "nome": "Frigorifero",
+    "categoria": "Cucina",
+    "dimensioni": { "width": 65, "depth": 68, "height": 195 },
+    "coloreDefault": "#cbd5e1",
+    "materialeDefault": "metal",
+    "tipoGeometria": "fridge"
+  },
+  {
     "id": "dining-table",
     "nome": "Tavolo da pranzo",
     "categoria": "Cucina",
@@ -79,6 +133,15 @@
     "coloreDefault": "#9e7146",
     "materialeDefault": "wood",
     "tipoGeometria": "dining_table"
+  },
+  {
+    "id": "dining-table-round",
+    "nome": "Tavolo rotondo",
+    "categoria": "Cucina",
+    "dimensioni": { "width": 120, "depth": 120, "height": 76 },
+    "coloreDefault": "#a8794c",
+    "materialeDefault": "wood",
+    "tipoGeometria": "dining_table_round"
   },
   {
     "id": "chair",
@@ -108,6 +171,15 @@
     "tipoGeometria": "bed_double"
   },
   {
+    "id": "bed-bunk",
+    "nome": "Letto a castello",
+    "categoria": "Camera",
+    "dimensioni": { "width": 100, "depth": 205, "height": 175 },
+    "coloreDefault": "#c29b72",
+    "materialeDefault": "wood",
+    "tipoGeometria": "bed_bunk"
+  },
+  {
     "id": "nightstand",
     "nome": "Comodino",
     "categoria": "Camera",
@@ -124,6 +196,15 @@
     "coloreDefault": "#dfd9ce",
     "materialeDefault": "matte",
     "tipoGeometria": "wardrobe"
+  },
+  {
+    "id": "wardrobe-corner",
+    "nome": "Armadio ad angolo (L)",
+    "categoria": "Camera",
+    "dimensioni": { "width": 200, "depth": 145, "height": 235 },
+    "coloreDefault": "#dfd9ce",
+    "materialeDefault": "matte",
+    "tipoGeometria": "wardrobe_corner"
   },
   {
     "id": "dresser",
@@ -144,6 +225,15 @@
     "tipoGeometria": "sink"
   },
   {
+    "id": "bathroom-vanity",
+    "nome": "Mobile bagno doppio lavabo",
+    "categoria": "Bagno",
+    "dimensioni": { "width": 140, "depth": 50, "height": 85 },
+    "coloreDefault": "#e2ddd5",
+    "materialeDefault": "matte",
+    "tipoGeometria": "bathroom_vanity"
+  },
+  {
     "id": "wc",
     "nome": "WC",
     "categoria": "Bagno",
@@ -151,6 +241,15 @@
     "coloreDefault": "#f7f9fa",
     "materialeDefault": "ceramic",
     "tipoGeometria": "wc"
+  },
+  {
+    "id": "bidet",
+    "nome": "Bidet",
+    "categoria": "Bagno",
+    "dimensioni": { "width": 38, "depth": 56, "height": 42 },
+    "coloreDefault": "#f7f9fa",
+    "materialeDefault": "ceramic",
+    "tipoGeometria": "bidet"
   },
   {
     "id": "shower",
@@ -187,6 +286,15 @@
     "coloreDefault": "#eef1f4",
     "materialeDefault": "metal",
     "tipoGeometria": "washing_machine"
+  },
+  {
+    "id": "boiler",
+    "nome": "Caldaia murale",
+    "categoria": "Altro",
+    "dimensioni": { "width": 45, "depth": 35, "height": 78 },
+    "coloreDefault": "#f1f5f9",
+    "materialeDefault": "metal",
+    "tipoGeometria": "boiler"
   },
   {
     "id": "plant",
