@@ -2,15 +2,18 @@
  * Generatore procedurale di mobili 3D in Three.js con proporzioni credibili
  * + supporto opzionale per il caricamento di modelli .glb personalizzati.
  */
-import React, { Suspense, useMemo } from 'react';
+import React, { Suspense, useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { useGLTF } from '@react-three/drei';
 import type { Furniture, FurnitureMaterial } from '../types/project';
+import { getMarbleTexture } from '../utils/proceduralTextures';
 
 function materialProps(mat: FurnitureMaterial): { roughness: number; metalness: number } {
   switch (mat) {
     case 'wood':
       return { roughness: 0.62, metalness: 0.04 };
+    case 'marble':
+      return { roughness: 0.14, metalness: 0.06 };
     case 'fabric':
       return { roughness: 0.92, metalness: 0.0 };
     case 'leather':
@@ -63,7 +66,28 @@ const ProceduralFurniture: React.FC<{ item: Furniture }> = ({ item }) => {
   const { width: w, depth: d, height: h, color, material, geometryType } = item;
   const mp = materialProps(material);
 
-  const mainMat = <meshStandardMaterial color={color} roughness={mp.roughness} metalness={mp.metalness} />;
+  const marbleTex = useMemo(
+    () => (material === 'marble' ? getMarbleTexture(color) : null),
+    [material, color]
+  );
+
+  useEffect(() => {
+    return () => {
+      marbleTex?.dispose();
+    };
+  }, [marbleTex]);
+
+  const mainMat = marbleTex ? (
+    <meshStandardMaterial
+      key={`marble_${color}`}
+      color="#ffffff"
+      map={marbleTex}
+      roughness={mp.roughness}
+      metalness={mp.metalness}
+    />
+  ) : (
+    <meshStandardMaterial color={color} roughness={mp.roughness} metalness={mp.metalness} />
+  );
   const legMat = <meshStandardMaterial color="#3c2f25" roughness={0.6} metalness={0.15} />;
   const chromeMat = <meshStandardMaterial color="#cfd6de" roughness={0.22} metalness={0.85} />;
 

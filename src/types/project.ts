@@ -107,6 +107,7 @@ export type FurnitureMaterial =
   | 'leather'
   | 'metal'
   | 'ceramic'
+  | 'marble'
   | 'matte';
 
 export type FurnitureGeometryType =

@@ -138,6 +138,7 @@ const OPENING_COLOR_PRESETS = [
 
 const MATERIAL_OPTIONS: { value: FurnitureMaterial; label: string }[] = [
   { value: 'wood', label: 'Legno' },
+  { value: 'marble', label: 'Marmo' },
   { value: 'fabric', label: 'Tessuto' },
   { value: 'leather', label: 'Pelle' },
   { value: 'matte', label: 'Laccato opaco' },

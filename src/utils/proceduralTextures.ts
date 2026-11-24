@@ -218,8 +218,103 @@ function createConcreteCanvas(baseColor: string): HTMLCanvasElement {
   return canvas;
 }
 
+/** Genera una texture marmo venato procedurale adattata al colore scelto (Carrara, Calacatta, Nero Marquina, ecc.) */
+function createMarbleCanvas(baseColor: string): HTMLCanvasElement {
+  const size = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+
+  const base = parseHexColor(baseColor, '#f2f0ec');
+  const lum = 0.299 * base[0] + 0.587 * base[1] + 0.114 * base[2];
+
+  // Fondo marmo con leggere nuvolature minerali
+  ctx.fillStyle = rgbCss(base[0], base[1], base[2]);
+  ctx.fillRect(0, 0, size, size);
+
+  for (let i = 0; i < 45; i++) {
+    const x = (i * 113 + 37) % size;
+    const y = (i * 167 + 29) % size;
+    const rad = 45 + (i % 70);
+    const delta = i % 2 === 0 ? 18 : -18;
+    const grad = ctx.createRadialGradient(x, y, 4, x, y, rad);
+    grad.addColorStop(0, rgbCss(base[0] + delta, base[1] + delta, base[2] + delta, 0.13));
+    grad.addColorStop(1, rgbCss(base[0], base[1], base[2], 0));
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(x, y, rad, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Venature principali e secondarie (più scure su marmi chiari, chiare/dorate su marmi scuri)
+  const mainVeinColor =
+    lum > 125
+      ? rgbCss(base[0] * 0.62, base[1] * 0.63, base[2] * 0.66, 0.42)
+      : rgbCss(base[0] + 105, base[1] + 102, base[2] + 95, 0.36);
+  const softVeinColor =
+    lum > 125
+      ? rgbCss(base[0] * 0.72, base[1] * 0.72, base[2] * 0.74, 0.24)
+      : rgbCss(base[0] + 75, base[1] + 72, base[2] + 66, 0.2);
+
+  const drawVein = (startY: number, amp: number, freq: number, width: number, stroke: string) => {
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = width;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (let x = 0; x <= size; x += 8) {
+      const t = x / size;
+      const y =
+        startY +
+        t * 210 +
+        Math.sin(t * Math.PI * freq + startY * 0.05) * amp +
+        Math.sin(t * Math.PI * (freq * 2.7) + 1.2) * (amp * 0.32);
+      const wy = ((y % size) + size) % size;
+      if (x === 0 || Math.abs(wy - (((startY + ((x - 8) / size) * 210) % size) + size) % size) > 120) {
+        ctx.moveTo(x, wy);
+      } else {
+        ctx.lineTo(x, wy);
+      }
+    }
+    ctx.stroke();
+  };
+
+  drawVein(40, 26, 2.2, 3.2, softVeinColor);
+  drawVein(44, 24, 2.2, 1.3, mainVeinColor);
+  drawVein(190, 34, 1.8, 4.0, softVeinColor);
+  drawVein(192, 32, 1.8, 1.5, mainVeinColor);
+  drawVein(340, 22, 2.8, 2.6, softVeinColor);
+  drawVein(342, 20, 2.8, 1.1, mainVeinColor);
+  drawVein(460, 18, 3.3, 1.0, mainVeinColor);
+
+  return canvas;
+}
+
 const canvasCache = new Map<string, HTMLCanvasElement>();
 const MAX_CACHE_ENTRIES = 24;
+
+export function getMarbleTexture(baseColor: string): THREE.CanvasTexture {
+  const resolved = (baseColor || '#f2f0ec').toLowerCase();
+  const key = `marble_${resolved}`;
+
+  let canvas = canvasCache.get(key);
+  if (!canvas) {
+    canvas = createMarbleCanvas(resolved);
+    if (canvasCache.size >= MAX_CACHE_ENTRIES) {
+      const oldestKey = canvasCache.keys().next().value;
+      if (oldestKey) canvasCache.delete(oldestKey);
+    }
+    canvasCache.set(key, canvas);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  texture.needsUpdate = true;
+  return texture;
+}
 
 export function getFloorTexture(
   type: FloorTextureType,
