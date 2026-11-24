@@ -6,6 +6,7 @@
  */
 import React, { useRef } from 'react';
 import {
+  Calculator,
   Compass,
   DoorOpen,
   Download,
@@ -47,6 +48,12 @@ const STEPS: { id: WizardStep; title: string; subtitle: string; icon: React.Reac
     title: '3. Rendering 3D',
     subtitle: 'Esplora ed esporta',
     icon: <Box className="w-4 h-4" />,
+  },
+  {
+    id: 4,
+    title: '4. Impianti & Vernice',
+    subtitle: 'Cavi, tubi e pittura',
+    icon: <Calculator className="w-4 h-4" />,
   },
 ];
 

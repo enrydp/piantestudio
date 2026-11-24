@@ -14,6 +14,7 @@ import { Toast } from './components/Toast';
 import { ShortcutsModal } from './components/ShortcutsModal';
 import { FloorplanCropModal } from './components/FloorplanCropModal';
 import { AiPhotoRenderModal } from './components/AiPhotoRenderModal';
+import { MepEstimatorView, type MepTabId } from './components/MepEstimatorView';
 import { FloorplanCanvas } from './editor2d/FloorplanCanvas';
 import { Scene3D, type Scene3DHandle } from './viewer3d/Scene3D';
 import { useProjectStore } from './store/useProjectStore';
@@ -49,6 +50,7 @@ export const App: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scene3DRef = useRef<Scene3DHandle>(null);
   const [aiSourceRenderUrl, setAiSourceRenderUrl] = useState<string | null>(null);
+  const [mepTab, setMepTab] = useState<MepTabId>('all');
 
   // Sincronizza classe 'dark' sull'elemento <html>
   useEffect(() => {
@@ -215,7 +217,11 @@ export const App: React.FC = () => {
       <HeaderWizard />
 
       <div className="flex-1 flex min-h-0 overflow-hidden">
-        <LeftToolbar onTriggerUploadFloorplan={handleTriggerUploadFloorplan} />
+        <LeftToolbar
+          onTriggerUploadFloorplan={handleTriggerUploadFloorplan}
+          mepTab={mepTab}
+          onChangeMepTab={setMepTab}
+        />
 
         <main className="flex-1 relative min-w-0 min-h-0 flex">
           {step < 3 ? (
@@ -223,18 +229,22 @@ export const App: React.FC = () => {
               onLoadSampleFloorplan={handleLoadSampleFloorplan}
               externalFileInputRef={fileInputRef}
             />
-          ) : (
+          ) : step === 3 ? (
             <Scene3D ref={scene3DRef} />
+          ) : (
+            <MepEstimatorView activeTab={mepTab} onChangeTab={setMepTab} />
           )}
         </main>
 
-        <RightPropertiesPanel
-          onTriggerUploadFloorplan={handleTriggerUploadFloorplan}
-          onLoadSampleFloorplan={handleLoadSampleFloorplan}
-          onExportPng={handleExportPng}
-          onExportGlb={handleExportGlb}
-          onOpenAiPhotoModal={handleOpenAiPhotoModal}
-        />
+        {step < 4 && (
+          <RightPropertiesPanel
+            onTriggerUploadFloorplan={handleTriggerUploadFloorplan}
+            onLoadSampleFloorplan={handleLoadSampleFloorplan}
+            onExportPng={handleExportPng}
+            onExportGlb={handleExportGlb}
+            onOpenAiPhotoModal={handleOpenAiPhotoModal}
+          />
+        )}
       </div>
 
       <Toast />

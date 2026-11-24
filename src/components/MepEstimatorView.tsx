@@ -1,0 +1,1328 @@
+/**
+ * Step 4 — Sezione "Impianti & Vernice":
+ * - Mini-pianta interattiva per posizionare Quadro Elettrico (⚡) e Collettore/Caldaia (💧)
+ * - Calcolo geometrico in tempo reale di:
+ *   1) Impianto Elettrico: punti luce, prese, scatole, metri di cavo divisi per sezione (1,5 / 2,5 / 4 / 6 mm²) e corrugati
+ *   2) Impianto Idraulico: tubi Multistrato / PEX / PPR / Rame (fredda, calda, dorsale) + scarichi Ø40/50 e Ø110 mm
+ *   3) Pittura Pareti: m² netti (sottratte aperture), soffitto opzionale, kg di vernice, litri, secchi e fissativo
+ * - Analisi avanzata opzionale tramite Google Gemini API Key (condivisa con la modale Foto AI)
+ * - Esportazione immediata CSV (Excel) e Stampa / PDF
+ */
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  AlertCircle,
+  Check,
+  Copy,
+  Download,
+  Droplets,
+  ExternalLink,
+  KeyRound,
+  Loader2,
+  MapPin,
+  Paintbrush,
+  Printer,
+  Sparkles,
+  Zap,
+} from 'lucide-react';
+import { useProjectStore } from '../store/useProjectStore';
+import { detectRooms } from '../utils/rooms';
+import { getWallsBounds } from '../utils/geometry';
+import {
+  PAINT_TYPE_PRESETS,
+  PIPE_MATERIAL_LABELS,
+  buildMepCsv,
+  estimateMepAndPaint,
+  getDefaultServicePoints,
+  isWaterFixture,
+  type CeiLevel,
+  type MepConfig,
+  type PaintType,
+  type PipeMaterial,
+  type WallSidesMode,
+} from '../utils/mepEstimator';
+
+const GEMINI_KEY_STORAGE = 'piantestudio_gemini_api_key_v1';
+
+export type MepTabId = 'all' | 'electrical' | 'plumbing' | 'paint' | 'ai';
+
+interface MepEstimatorViewProps {
+  activeTab: MepTabId;
+  onChangeTab: (tab: MepTabId) => void;
+}
+
+export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
+  activeTab,
+  onChangeTab,
+}) => {
+  const { project, showToast } = useProjectStore();
+
+  const rooms = useMemo(
+    () => detectRooms(project.walls, project.furniture),
+    [project.walls, project.furniture]
+  );
+
+  const defaults = useMemo(
+    () => getDefaultServicePoints(project, rooms),
+    [project, rooms]
+  );
+
+  const [config, setConfig] = useState<MepConfig>(() => ({
+    ceiLevel: 'livello2',
+    panelPosition: defaults.panelPosition,
+    includeInduction: true,
+    includeAcLine: true,
+    pipeMaterial: 'multistrato',
+    manifoldPosition: defaults.manifoldPosition,
+    includeHotWater: true,
+    includeDrains: true,
+    paintType: 'lavabile',
+    wallSides: 'auto',
+    coats: 2,
+    includeCeiling: true,
+    includePrimer: true,
+    yieldSqmPerLiter: PAINT_TYPE_PRESETS.lavabile.defaultYield,
+    paintDensityKgPerL: PAINT_TYPE_PRESETS.lavabile.defaultDensity,
+    bucketKg: 20,
+    wastePct: 15,
+  }));
+
+  const [hasCustomPanel, setHasCustomPanel] = useState(false);
+  const [hasCustomManifold, setHasCustomManifold] = useState(false);
+  const [placingPoint, setPlacingPoint] = useState<'panel' | 'manifold' | null>(null);
+
+  // Mantieni sincronizzati i punti di default finché l'utente non li sposta manualmente sulla mini-pianta
+  useEffect(() => {
+    setConfig((prev) => ({
+      ...prev,
+      panelPosition: hasCustomPanel ? prev.panelPosition : defaults.panelPosition,
+      manifoldPosition: hasCustomManifold ? prev.manifoldPosition : defaults.manifoldPosition,
+    }));
+  }, [defaults, hasCustomPanel, hasCustomManifold]);
+
+  const estimate = useMemo(
+    () => estimateMepAndPaint(project, rooms, config),
+    [project, rooms, config]
+  );
+
+  // Stato Google Gemini AI (stessa chiave usata nella modale Foto Realistica)
+  const [apiKey, setApiKey] = useState(() => {
+    try {
+      return localStorage.getItem(GEMINI_KEY_STORAGE) ?? '';
+    } catch {
+      return '';
+    }
+  });
+  const [aiNotes, setAiNotes] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiReport, setAiReport] = useState<string | null>(null);
+  const [copiedAi, setCopiedAi] = useState(false);
+
+  const handleSaveApiKey = (val: string) => {
+    setApiKey(val);
+    try {
+      if (val.trim()) localStorage.setItem(GEMINI_KEY_STORAGE, val.trim());
+      else localStorage.removeItem(GEMINI_KEY_STORAGE);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleExportCsv = () => {
+    const csv = buildMepCsv(estimate, project.name || 'PianteStudio');
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const safeName = (project.name || 'progetto').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    a.href = url;
+    a.download = `${safeName}-computo-impianti-vernice.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Computo esportato in CSV (compatibile Excel)!', 'success');
+  };
+
+  const handlePrintReport = () => {
+    const win = window.open('', '_blank', 'width=900,height=720');
+    if (!win) {
+      window.print();
+      return;
+    }
+    const cableRows = estimate.electrical.cables
+      .map(
+        (c) =>
+          `<tr><td><strong>${c.sectionMm2}</strong></td><td>${c.usage}</td><td>${c.recommendedBreaker}</td><td style="text-align:right"><strong>${c.meters} m</strong></td></tr>`
+      )
+      .join('');
+    const roomRows = estimate.electrical.byRoom
+      .map(
+        (r) =>
+          `<tr><td>${r.roomName}</td><td>${r.areaSqm} m²</td><td style="text-align:center">${r.lightPoints}</td><td style="text-align:center">${r.standardOutlets}</td><td style="text-align:center">${r.dedicatedOutlets}</td><td style="text-align:center">${r.tvDataPoints}</td></tr>`
+      )
+      .join('');
+    const fixtureRows = estimate.plumbing.fixtures
+      .map(
+        (f) =>
+          `<tr><td>${f.name}</td><td>${f.roomName}</td><td style="text-align:right">${f.coldPipeM} m</td><td style="text-align:right">${f.hotPipeM} m</td><td style="text-align:right">${f.drainPipeM} m (Ø${f.drainDiameterMm})</td></tr>`
+      )
+      .join('');
+    const aiHtml = aiReport
+      ? `<h2>Analisi Tecnica Google Gemini AI</h2><div style="white-space:pre-wrap;background:#f8fafc;border:1px solid #cbd5e1;padding:12px;border-radius:8px;font-size:12px;line-height:1.5">${aiReport.replace(/</g, '&lt;')}</div>`
+      : '';
+
+    win.document.write(`<!doctype html><html lang="it"><head><meta charset="utf-8"><title>Computo ${project.name}</title>
+      <style>
+        body{font-family:system-ui,-apple-system,sans-serif;color:#0f172a;padding:24px;max-width:860px;margin:0 auto;}
+        h1{margin:0 0 4px;font-size:22px;} h2{margin:22px 0 8px;font-size:15px;border-bottom:2px solid #e2e8f0;padding-bottom:4px;}
+        .meta{color:#475569;font-size:12px;margin-bottom:16px;}
+        table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:12px;}
+        th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:left;}
+        th{background:#f1f5f9;}
+        .kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0;}
+        .card{border:1px solid #cbd5e1;border-radius:8px;padding:10px;}
+        .card small{color:#64748b;display:block;font-size:11px;}
+        .card strong{font-size:18px;}
+        .note{margin-top:18px;font-size:11px;color:#64748b;border-top:1px solid #e2e8f0;padding-top:8px;}
+      </style></head><body>
+      <h1>Computo Impianti e Pittura — ${project.name}</h1>
+      <div class="meta">Superficie calpestabile stimata: ${estimate.totalFloorAreaSqm} m² • Stanze rilevate: ${estimate.roomCount} • Margine sfrido: +${config.wastePct}%</div>
+      <div class="kpi">
+        <div class="card"><small>Punti luce / Prese</small><strong>${estimate.electrical.totalLightPoints} / ${estimate.electrical.totalOutlets}</strong></div>
+        <div class="card"><small>Cavi elettrici totali</small><strong>${estimate.electrical.totalCableMeters} m</strong></div>
+        <div class="card"><small>Tubi ${estimate.plumbing.pipeMaterialLabel}</small><strong>${estimate.plumbing.totalSupplyMeters} m</strong></div>
+        <div class="card"><small>Vernice pareti (${config.coats} mani)</small><strong>${estimate.paint.paintKg} kg</strong></div>
+      </div>
+      <h2>1. Impianto Elettrico (${config.ceiLevel.toUpperCase()})</h2>
+      <table><thead><tr><th>Sezione</th><th>Utilizzo</th><th>Protezione indicativa</th><th>Lunghezza</th></tr></thead><tbody>${cableRows}</tbody></table>
+      <p style="font-size:12px">Corrugato Ø20 mm: <strong>${estimate.electrical.corrugated20M} m</strong> • Corrugato Ø25 mm: <strong>${estimate.electrical.corrugated25M} m</strong> • Scatole 503: <strong>${estimate.electrical.boxes503}</strong> • Cassette derivazione: <strong>${estimate.electrical.junctionBoxes}</strong></p>
+      <table><thead><tr><th>Stanza</th><th>Area</th><th>Punti luce</th><th>Prese std</th><th>Prese ded.</th><th>TV/Dati</th></tr></thead><tbody>${roomRows}</tbody></table>
+      <h2>2. Impianto Idraulico (${estimate.plumbing.pipeMaterialLabel})</h2>
+      <p style="font-size:12px">Acqua fredda Ø16: <strong>${estimate.plumbing.coldBranchMeters} m</strong> • Acqua calda Ø16: <strong>${estimate.plumbing.hotBranchMeters} m</strong> • Dorsale Ø20: <strong>${estimate.plumbing.mainSupplyMeters} m</strong> • Scarichi Ø40/50: <strong>${estimate.plumbing.drain40_50Meters} m</strong> • Scarichi Ø110: <strong>${estimate.plumbing.drain110Meters} m</strong></p>
+      ${fixtureRows ? `<table><thead><tr><th>Utenza</th><th>Stanza</th><th>Fredda</th><th>Calda</th><th>Scarico</th></tr></thead><tbody>${fixtureRows}</tbody></table>` : '<p style="font-size:12px">Nessun sanitario/punto acqua posizionato in pianta.</p>'}
+      <h2>3. Pittura Pareti (${PAINT_TYPE_PRESETS[config.paintType].label})</h2>
+      <p style="font-size:12px">Pareti lorde: ${estimate.paint.grossWallSqm} m² • Aperture sottratte: -${estimate.paint.openingsSubtractedSqm} m² • Pareti nette: <strong>${estimate.paint.netWallSqm} m²</strong> • Soffitto: <strong>${estimate.paint.ceilingSqm} m²</strong> • Totale: <strong>${estimate.paint.totalSurfaceSqm} m²</strong> (${config.coats} mani)<br/>
+      Vernice necessaria: <strong>${estimate.paint.paintKg} kg</strong> (${estimate.paint.paintLiters} L) → consigliati <strong>${estimate.paint.bucketCount} secchi da ${estimate.paint.bucketKg} kg</strong>${config.includePrimer ? ` • Fissativo: <strong>${estimate.paint.primerKg} kg</strong> (${estimate.paint.primerLiters} L)` : ''}.</p>
+      ${aiHtml}
+      <div class="note">Stima preliminare di cantiere generata da PianteStudio. Per l'esecuzione definitiva e le certificazioni (DiCo) fare sempre riferimento a tecnici e installatori abilitati.</div>
+      </body></html>`);
+    win.document.close();
+    win.focus();
+    win.print();
+  };
+
+  /** Chiama Google Gemini API usando la stessa API Key dell'utente per una relazione tecnica dettagliata */
+  const handleAnalyzeWithGemini = async () => {
+    const key = apiKey.trim();
+    if (!key) {
+      setAiError('Inserisci la tua Google Gemini API Key per generare l’analisi tecnica con AI.');
+      return;
+    }
+
+    setAiLoading(true);
+    setAiError(null);
+
+    const promptText = [
+      'Sei un perito impiantista e tecnico di cantiere italiano esperto in ristrutturazioni residenziali (CEI 64-8, impianti idrici multistrato/PEX/rame, tinteggiatura).',
+      'Analizza i dati geometrici reali del progetto estratti dalla piantina e fornisci un computo dettagliato, chiaro e pratico in italiano.',
+      '',
+      `PROGETTO: ${project.name}`,
+      `Superficie calpestabile: ${estimate.totalFloorAreaSqm} m² (${estimate.roomCount} stanze)`,
+      `Muri attivi: ${project.walls.filter((w) => !w.demolished).length}, Aperture: ${project.openings.length}, Mobili/Sanitari: ${project.furniture.length}`,
+      '',
+      'STANZE E PUNTI ELETTRICI STIMATI:',
+      ...estimate.electrical.byRoom.map(
+        (r) =>
+          `- ${r.roomName} (${r.areaSqm} m², distanza dal quadro ${r.distanceFromPanelM} m): ${r.lightPoints} punti luce, ${r.standardOutlets} prese standard, ${r.dedicatedOutlets} prese dedicate, ${r.tvDataPoints} TV/dati`
+      ),
+      'CAVI ELETTRICI STIMATI:',
+      ...estimate.electrical.cables.map(
+        (c) => `- Sezione ${c.sectionMm2}: ${c.meters} m (${c.usage})`
+      ),
+      `Corrugati: Ø20 mm = ${estimate.electrical.corrugated20M} m, Ø25 mm = ${estimate.electrical.corrugated25M} m; Scatole 503 = ${estimate.electrical.boxes503}`,
+      '',
+      `IMPIANTO IDRAULICO (tubo scelto: ${estimate.plumbing.pipeMaterialLabel}):`,
+      estimate.plumbing.fixtures.length > 0
+        ? estimate.plumbing.fixtures
+            .map(
+              (f) =>
+                `- ${f.name} (${f.roomName}, dist. collettore ${f.distanceFromManifoldM} m): fredda ${f.coldPipeM} m, calda ${f.hotPipeM} m, scarico Ø${f.drainDiameterMm} = ${f.drainPipeM} m`
+            )
+            .join('\n')
+        : '- Nessun sanitario posizionato ancora in pianta',
+      `Totali idraulica: fredda Ø16 = ${estimate.plumbing.coldBranchMeters} m, calda Ø16 = ${estimate.plumbing.hotBranchMeters} m, dorsale Ø20 = ${estimate.plumbing.mainSupplyMeters} m, scarichi Ø40/50 = ${estimate.plumbing.drain40_50Meters} m, Ø110 = ${estimate.plumbing.drain110Meters} m`,
+      '',
+      `PITTURA (${PAINT_TYPE_PRESETS[config.paintType].label}, ${config.coats} mani):`,
+      `- Pareti nette: ${estimate.paint.netWallSqm} m² (sottratti ${estimate.paint.openingsSubtractedSqm} m² di aperture), Soffitto: ${estimate.paint.ceilingSqm} m², Totale: ${estimate.paint.totalSurfaceSqm} m²`,
+      `- Vernice stimata: ${estimate.paint.paintKg} kg (${estimate.paint.paintLiters} L → ${estimate.paint.bucketCount} secchi da ${estimate.paint.bucketKg} kg), Fissativo: ${estimate.paint.primerKg} kg`,
+      aiNotes.trim() ? `\nNOTE AGGIUNTIVE DELL'UTENTE: ${aiNotes.trim()}` : '',
+      '',
+      'Struttura la risposta in 4 sezioni concise con elenchi puntati:',
+      '1. Verifica Impianto Elettrico e composizione consigliata del Quadro Elettrico (differenziali e magnetotermici).',
+      '2. Lista materiali e raccordi per Impianto Idraulico (collettore, curve, valvole, scarichi) e suggerimenti pratici.',
+      '3. Lista materiali per Pittura (secchi vernice in kg, fissativo, stucco, nastro, teli) e resa.',
+      '4. Eventuali controlli/avvertenze normative (es. zone bagno, linee dedicate cucina/induzione).',
+    ].join('\n');
+
+    const preferredTextModels = [
+      'gemini-2.5-flash',
+      'gemini-2.5-flash-lite',
+      'gemini-2.0-flash',
+      'gemini-2.5-pro',
+      'gemini-1.5-flash',
+    ];
+
+    try {
+      let modelsToTry = [...preferredTextModels];
+      try {
+        const listRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`
+        );
+        if (listRes.ok) {
+          const listJson = (await listRes.json()) as {
+            models?: { name?: string; supportedGenerationMethods?: string[] }[];
+          };
+          const available = (listJson.models ?? [])
+            .filter(
+              (m) =>
+                m.name &&
+                m.supportedGenerationMethods?.includes('generateContent') &&
+                /gemini/i.test(m.name) &&
+                !/image|vision|embedding|aqa|tts/i.test(m.name)
+            )
+            .map((m) => m.name!.replace(/^models\//, ''));
+          if (available.length > 0) {
+            const ordered = preferredTextModels.filter((p) => available.includes(p));
+            const extra = available.filter((a) => !ordered.includes(a));
+            modelsToTry = [...ordered, ...extra].slice(0, 6);
+          }
+        }
+      } catch {
+        // usa la lista di default
+      }
+
+      let finalText: string | null = null;
+      let lastErr = '';
+
+      for (const model of modelsToTry) {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: promptText }] }],
+            }),
+          }
+        );
+
+        const data = (await res.json()) as {
+          error?: { message?: string };
+          candidates?: { content?: { parts?: { text?: string }[] } }[];
+        };
+
+        if (!res.ok) {
+          lastErr = `${model}: ${data?.error?.message || `HTTP ${res.status}`}`;
+          continue;
+        }
+
+        const text = data.candidates?.[0]?.content?.parts
+          ?.map((p) => p.text ?? '')
+          .join('')
+          .trim();
+
+        if (text) {
+          finalText = text;
+          break;
+        }
+      }
+
+      if (finalText) {
+        setAiReport(finalText);
+        showToast('Relazione tecnica generata con Google Gemini AI!', 'success');
+      } else {
+        setAiError(
+          `Impossibile ottenere una risposta da Gemini. Verifica la API Key su Google AI Studio. (${lastErr || 'nessun modello disponibile'})`
+        );
+      }
+    } catch (err) {
+      setAiError(
+        err instanceof Error
+          ? err.message
+          : 'Errore di rete durante la chiamata a Google Gemini.'
+      );
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  // Geometria per la mini-pianta SVG interattiva
+  const activeWalls = useMemo(
+    () => project.walls.filter((w) => !w.demolished),
+    [project.walls]
+  );
+  const planBounds = useMemo(() => {
+    const b = getWallsBounds(activeWalls);
+    const pad = 0.6;
+    return {
+      minX: b.minX - pad,
+      minY: b.minY - pad,
+      width: Math.max(2, b.width + pad * 2),
+      height: Math.max(2, b.height + pad * 2),
+    };
+  }, [activeWalls]);
+
+  const handleMiniPlanClick = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!placingPoint) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const rx = (e.clientX - rect.left) / rect.width;
+    const ry = (e.clientY - rect.top) / rect.height;
+    const x = Number((planBounds.minX + rx * planBounds.width).toFixed(2));
+    const y = Number((planBounds.minY + ry * planBounds.height).toFixed(2));
+
+    if (placingPoint === 'panel') {
+      setHasCustomPanel(true);
+      setConfig((prev) => ({ ...prev, panelPosition: { x, y } }));
+      showToast('Posizione Quadro Elettrico aggiornata: cavi ricalcolati!', 'info');
+    } else {
+      setHasCustomManifold(true);
+      setConfig((prev) => ({ ...prev, manifoldPosition: { x, y } }));
+      showToast('Posizione Caldaia / Collettore aggiornata: tubi ricalcolati!', 'info');
+    }
+    setPlacingPoint(null);
+  };
+
+  const showElectrical = activeTab === 'all' || activeTab === 'electrical';
+  const showPlumbing = activeTab === 'all' || activeTab === 'plumbing';
+  const showPaint = activeTab === 'all' || activeTab === 'paint';
+  const showAi = activeTab === 'all' || activeTab === 'ai';
+
+  return (
+    <div className="flex-1 h-full overflow-y-auto bg-slate-50 dark:bg-slate-950 p-4 md:p-6">
+      <div className="max-w-6xl mx-auto space-y-5">
+        {/* Intestazione + azioni export */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              Computo Impianti & Pittura
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
+                {estimate.totalFloorAreaSqm} m² • {estimate.roomCount}{' '}
+                {estimate.roomCount === 1 ? 'stanza' : 'stanze'}
+              </span>
+            </h1>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              Pre-dimensionamento automatico da muri reali, aperture e mobili/sanitari inseriti.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5 text-emerald-600" />
+              Esporta CSV
+            </button>
+            <button
+              type="button"
+              onClick={handlePrintReport}
+              className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-xs"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              Stampa / PDF
+            </button>
+          </div>
+        </div>
+
+        {/* Avviso se mancano muri */}
+        {activeWalls.length === 0 && (
+          <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-200 flex items-center gap-2.5">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>
+              Non hai ancora tracciato muri nello <strong>Step 0</strong>. Traccia la pianta e inserisci bagni/mobili nello Step 2 per ottenere un calcolo basato sulle misure reali.
+            </span>
+          </div>
+        )}
+
+        {/* 4 KPI principali */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <button
+            type="button"
+            onClick={() => onChangeTab('electrical')}
+            className="text-left p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-amber-400 transition-colors cursor-pointer shadow-xs"
+          >
+            <div className="flex items-center justify-between text-amber-600 dark:text-amber-400 mb-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wider">Punti Elettrici</span>
+              <Zap className="w-4 h-4" />
+            </div>
+            <div className="text-xl font-bold text-slate-900 dark:text-white">
+              {estimate.electrical.totalLightPoints} luci • {estimate.electrical.totalOutlets} prese
+            </div>
+            <div className="text-[11px] text-slate-500 mt-0.5">
+              {estimate.electrical.totalCableMeters} m di cavo totali (+{config.wastePct}% sfrido)
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onChangeTab('electrical')}
+            className="text-left p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-amber-400 transition-colors cursor-pointer shadow-xs"
+          >
+            <div className="flex items-center justify-between text-orange-600 dark:text-orange-400 mb-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wider">Cavi & Corrugati</span>
+              <Zap className="w-4 h-4" />
+            </div>
+            <div className="text-xl font-bold text-slate-900 dark:text-white">
+              {estimate.electrical.totalCableMeters} m
+            </div>
+            <div className="text-[11px] text-slate-500 mt-0.5">
+              Corrugato Ø20: {estimate.electrical.corrugated20M} m • Ø25: {estimate.electrical.corrugated25M} m
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onChangeTab('plumbing')}
+            className="text-left p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-sky-400 transition-colors cursor-pointer shadow-xs"
+          >
+            <div className="flex items-center justify-between text-sky-600 dark:text-sky-400 mb-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wider">
+                Tubi {config.pipeMaterial === 'multistrato' ? 'Multistrato' : config.pipeMaterial.toUpperCase()}
+              </span>
+              <Droplets className="w-4 h-4" />
+            </div>
+            <div className="text-xl font-bold text-slate-900 dark:text-white">
+              {estimate.plumbing.totalSupplyMeters} m
+            </div>
+            <div className="text-[11px] text-slate-500 mt-0.5">
+              {estimate.plumbing.fixtures.length} punti acqua • Scarichi {estimate.plumbing.totalDrainMeters} m
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onChangeTab('paint')}
+            className="text-left p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-emerald-400 transition-colors cursor-pointer shadow-xs"
+          >
+            <div className="flex items-center justify-between text-emerald-600 dark:text-emerald-400 mb-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wider">Vernice Pareti</span>
+              <Paintbrush className="w-4 h-4" />
+            </div>
+            <div className="text-xl font-bold text-slate-900 dark:text-white">
+              {estimate.paint.paintKg} kg
+            </div>
+            <div className="text-[11px] text-slate-500 mt-0.5">
+              {estimate.paint.paintLiters} L ({estimate.paint.bucketCount}×{estimate.paint.bucketKg} kg) • {estimate.paint.totalSurfaceSqm} m²
+            </div>
+          </button>
+        </div>
+
+        {/* Barra Tabs di navigazione interna + Sfrido globale */}
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-white dark:bg-slate-900 p-2 rounded-2xl border border-slate-200 dark:border-slate-800">
+          <div className="flex flex-wrap items-center gap-1">
+            {(
+              [
+                { id: 'all', label: 'Tutto' },
+                { id: 'electrical', label: '⚡ Elettrico' },
+                { id: 'plumbing', label: '💧 Idraulico' },
+                { id: 'paint', label: '🎨 Vernice' },
+                { id: 'ai', label: '✨ Analisi Google AI' },
+              ] as { id: MepTabId; label: string }[]
+            ).map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => onChangeTab(t.id)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
+                  activeTab === t.id
+                    ? 'bg-blue-600 text-white'
+                    : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2 px-2 text-xs text-slate-600 dark:text-slate-300">
+            <span>Margine sfrido:</span>
+            <select
+              value={config.wastePct}
+              onChange={(e) => setConfig((c) => ({ ...c, wastePct: Number(e.target.value) }))}
+              className="px-2 py-1 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-semibold text-xs"
+            >
+              <option value={5}>+5%</option>
+              <option value={10}>+10%</option>
+              <option value={15}>+15% (consigliato)</option>
+              <option value={20}>+20%</option>
+              <option value={25}>+25%</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Mini-pianta interattiva per posizionare Quadro Elettrico e Caldaia/Collettore */}
+        {activeWalls.length > 0 && (showElectrical || showPlumbing) && (
+          <section className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 grid grid-cols-1 lg:grid-cols-3 gap-4 items-center">
+            <div className="space-y-2.5">
+              <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                <MapPin className="w-4 h-4 text-blue-600" />
+                Posizione Quadro e Collettore
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                Le distanze di <strong>cavi elettrici</strong> e <strong>tubi idraulici</strong> sono calcolate dalla posizione reale dei due punti sulla tua piantina. Clicca uno dei pulsanti e poi clicca sulla pianta per spostarli.
+              </p>
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPlacingPoint(placingPoint === 'panel' ? null : 'panel')}
+                  className={`px-3 py-2 rounded-xl border text-xs font-semibold flex items-center justify-between cursor-pointer transition-colors ${
+                    placingPoint === 'panel'
+                      ? 'bg-amber-500 text-white border-amber-600'
+                      : 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 hover:bg-amber-100'
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Zap className="w-3.5 h-3.5" />
+                    {placingPoint === 'panel'
+                      ? 'Clicca sulla piantina a destra...'
+                      : 'Sposta Quadro Elettrico (⚡)'}
+                  </span>
+                  <span className="font-mono text-[10px]">
+                    {config.panelPosition.x}m, {config.panelPosition.y}m
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPlacingPoint(placingPoint === 'manifold' ? null : 'manifold')}
+                  className={`px-3 py-2 rounded-xl border text-xs font-semibold flex items-center justify-between cursor-pointer transition-colors ${
+                    placingPoint === 'manifold'
+                      ? 'bg-sky-600 text-white border-sky-700'
+                      : 'bg-sky-50 dark:bg-sky-950/40 border-sky-200 dark:border-sky-800 text-sky-800 dark:text-sky-200 hover:bg-sky-100'
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Droplets className="w-3.5 h-3.5" />
+                    {placingPoint === 'manifold'
+                      ? 'Clicca sulla piantina a destra...'
+                      : 'Sposta Caldaia / Collettore (💧)'}
+                  </span>
+                  <span className="font-mono text-[10px]">
+                    {config.manifoldPosition.x}m, {config.manifoldPosition.y}m
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            <div className="lg:col-span-2">
+              <svg
+                viewBox={`${planBounds.minX} ${planBounds.minY} ${planBounds.width} ${planBounds.height}`}
+                onClick={handleMiniPlanClick}
+                className={`w-full h-56 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 ${
+                  placingPoint ? 'cursor-crosshair ring-2 ring-blue-500' : ''
+                }`}
+              >
+                {/* Stanze rilevate */}
+                {rooms.map((rm) => (
+                  <g key={rm.id}>
+                    {rm.floorStrips.map((st, idx) => (
+                      <rect
+                        key={idx}
+                        x={st.x}
+                        y={st.y}
+                        width={st.width}
+                        height={st.height}
+                        fill={
+                          rm.kind === 'bagno'
+                            ? 'rgba(14,165,233,0.12)'
+                            : rm.kind === 'cucina' || rm.kind === 'soggiorno_cucina'
+                              ? 'rgba(245,158,11,0.10)'
+                              : 'rgba(100,116,139,0.08)'
+                        }
+                      />
+                    ))}
+                    <text
+                      x={rm.bounds.centerX}
+                      y={rm.bounds.centerY}
+                      textAnchor="middle"
+                      fontSize={Math.max(0.22, planBounds.width * 0.025)}
+                      fill="#64748b"
+                      fontWeight="600"
+                    >
+                      {rm.name} ({rm.areaSqm} m²)
+                    </text>
+                  </g>
+                ))}
+
+                {/* Percorsi indicativi tubi idraulici verso i punti acqua */}
+                {showPlumbing &&
+                  estimate.plumbing.fixtures.map((fx) => (
+                    <line
+                      key={`pl_${fx.id}`}
+                      x1={config.manifoldPosition.x}
+                      y1={config.manifoldPosition.y}
+                      x2={fx.x}
+                      y2={fx.y}
+                      stroke="#0284c7"
+                      strokeWidth={0.05}
+                      strokeDasharray="0.14 0.1"
+                      opacity={0.7}
+                    />
+                  ))}
+
+                {/* Muri attivi */}
+                {activeWalls.map((w) => (
+                  <line
+                    key={w.id}
+                    x1={w.start.x}
+                    y1={w.start.y}
+                    x2={w.end.x}
+                    y2={w.end.y}
+                    stroke="#334155"
+                    strokeWidth={Math.max(0.1, w.thickness)}
+                    strokeLinecap="square"
+                  />
+                ))}
+
+                {/* Punti acqua (sanitari/cucina/lavatrice) */}
+                {project.furniture.filter(isWaterFixture).map((f) => (
+                  <circle
+                    key={`wf_${f.id}`}
+                    cx={f.x}
+                    cy={f.y}
+                    r={0.18}
+                    fill="#0ea5e9"
+                    stroke="#ffffff"
+                    strokeWidth={0.05}
+                  />
+                ))}
+
+                {/* Quadro Elettrico */}
+                <g transform={`translate(${config.panelPosition.x}, ${config.panelPosition.y})`}>
+                  <circle r={0.28} fill="#f59e0b" stroke="#ffffff" strokeWidth={0.07} />
+                  <text
+                    y={0.1}
+                    textAnchor="middle"
+                    fontSize={0.28}
+                    fill="#ffffff"
+                    fontWeight="bold"
+                  >
+                    ⚡
+                  </text>
+                </g>
+
+                {/* Collettore / Caldaia */}
+                <g transform={`translate(${config.manifoldPosition.x}, ${config.manifoldPosition.y})`}>
+                  <circle r={0.28} fill="#0284c7" stroke="#ffffff" strokeWidth={0.07} />
+                  <text
+                    y={0.1}
+                    textAnchor="middle"
+                    fontSize={0.26}
+                    fill="#ffffff"
+                    fontWeight="bold"
+                  >
+                    💧
+                  </text>
+                </g>
+              </svg>
+            </div>
+          </section>
+        )}
+
+        {/* ================= 1. IMPIANTO ELETTRICO ================= */}
+        {showElectrical && (
+          <section className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+                  <Zap className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold text-slate-900 dark:text-white">
+                    1. Impianto Elettrico — Cavi, Sezioni, Punti Luce e Prese
+                  </h2>
+                  <p className="text-[11px] text-slate-500">
+                    Dimensionamento indicativo secondo CEI 64-8 basato su stanze e mobili inseriti
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <select
+                  value={config.ceiLevel}
+                  onChange={(e) =>
+                    setConfig((c) => ({ ...c, ceiLevel: e.target.value as CeiLevel }))
+                  }
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-medium"
+                >
+                  <option value="livello1">CEI 64-8 Livello 1 (Base)</option>
+                  <option value="livello2">CEI 64-8 Livello 2 (Standard)</option>
+                  <option value="livello3">CEI 64-8 Livello 3 (Domotico)</option>
+                </select>
+                <label className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={config.includeInduction}
+                    onChange={(e) =>
+                      setConfig((c) => ({ ...c, includeInduction: e.target.checked }))
+                    }
+                    className="accent-blue-600"
+                  />
+                  <span>Induzione (4 mm²)</span>
+                </label>
+                <label className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={config.includeAcLine}
+                    onChange={(e) =>
+                      setConfig((c) => ({ ...c, includeAcLine: e.target.checked }))
+                    }
+                    className="accent-blue-600"
+                  />
+                  <span>Linea Clima</span>
+                </label>
+              </div>
+            </div>
+
+            {/* Tabella Cavi e Sezioni */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500">
+                    <th className="py-2 px-3 text-left font-semibold">Sezione Cavo</th>
+                    <th className="py-2 px-3 text-left font-semibold">Linea / Utilizzo</th>
+                    <th className="py-2 px-3 text-left font-semibold">Interruttore quadro</th>
+                    <th className="py-2 px-3 text-right font-semibold">Metri stimati</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
+                  {estimate.electrical.cables.map((row) => (
+                    <tr key={row.sectionMm2}>
+                      <td className="py-2.5 px-3 font-mono font-bold text-amber-700 dark:text-amber-300">
+                        {row.sectionMm2}
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-700 dark:text-slate-300">{row.usage}</td>
+                      <td className="py-2.5 px-3">
+                        <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 font-mono text-[11px]">
+                          {row.recommendedBreaker}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900 dark:text-white">
+                        {row.meters} m
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Corrugati e Scatole */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 text-xs">
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                <div className="text-[11px] text-slate-500">Corrugato Ø 20 mm</div>
+                <div className="text-base font-bold font-mono text-slate-900 dark:text-white">
+                  {estimate.electrical.corrugated20M} m
+                </div>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                <div className="text-[11px] text-slate-500">Corrugato Ø 25 mm</div>
+                <div className="text-base font-bold font-mono text-slate-900 dark:text-white">
+                  {estimate.electrical.corrugated25M} m
+                </div>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                <div className="text-[11px] text-slate-500">Scatole portafrutti 503</div>
+                <div className="text-base font-bold font-mono text-slate-900 dark:text-white">
+                  {estimate.electrical.boxes503} pz
+                </div>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                <div className="text-[11px] text-slate-500">Cassette derivazione</div>
+                <div className="text-base font-bold font-mono text-slate-900 dark:text-white">
+                  {estimate.electrical.junctionBoxes} pz
+                </div>
+              </div>
+            </div>
+
+            {/* Dettaglio punti luce e prese per singola stanza */}
+            <div className="overflow-x-auto pt-1">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                Dettaglio Punti Luce e Prese per Stanza
+              </div>
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 dark:bg-slate-800/70 text-slate-500">
+                    <th className="py-2 px-3 text-left rounded-l-lg">Stanza</th>
+                    <th className="py-2 px-3 text-right">Area</th>
+                    <th className="py-2 px-3 text-center">Punti luce</th>
+                    <th className="py-2 px-3 text-center">Prese 10/16A</th>
+                    <th className="py-2 px-3 text-center">Prese dedicate</th>
+                    <th className="py-2 px-3 text-center rounded-r-lg">TV / Dati</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
+                  {estimate.electrical.byRoom.map((r) => (
+                    <tr key={r.roomId}>
+                      <td className="py-2 px-3 font-medium text-slate-800 dark:text-slate-100">
+                        {r.roomName}
+                      </td>
+                      <td className="py-2 px-3 text-right font-mono text-slate-500">
+                        {r.areaSqm} m²
+                      </td>
+                      <td className="py-2 px-3 text-center font-mono font-semibold">
+                        {r.lightPoints}
+                      </td>
+                      <td className="py-2 px-3 text-center font-mono font-semibold">
+                        {r.standardOutlets}
+                      </td>
+                      <td className="py-2 px-3 text-center font-mono">
+                        {r.dedicatedOutlets}
+                      </td>
+                      <td className="py-2 px-3 text-center font-mono text-slate-500">
+                        {r.tvDataPoints}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
+        {/* ================= 2. IMPIANTO IDRAULICO ================= */}
+        {showPlumbing && (
+          <section className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-sky-100 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400 flex items-center justify-center">
+                  <Droplets className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold text-slate-900 dark:text-white">
+                    2. Impianto Idraulico — Tubi {estimate.plumbing.pipeMaterialLabel} e Scarichi
+                  </h2>
+                  <p className="text-[11px] text-slate-500">
+                    Calcolato dai sanitari, cucine e lavatrici posizionati in pianta
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <select
+                  value={config.pipeMaterial}
+                  onChange={(e) =>
+                    setConfig((c) => ({ ...c, pipeMaterial: e.target.value as PipeMaterial }))
+                  }
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-medium"
+                >
+                  {(Object.keys(PIPE_MATERIAL_LABELS) as PipeMaterial[]).map((k) => (
+                    <option key={k} value={k}>
+                      {PIPE_MATERIAL_LABELS[k].label}
+                    </option>
+                  ))}
+                </select>
+                <label className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={config.includeHotWater}
+                    onChange={(e) =>
+                      setConfig((c) => ({ ...c, includeHotWater: e.target.checked }))
+                    }
+                    className="accent-blue-600"
+                  />
+                  <span>Acqua calda</span>
+                </label>
+                <label className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={config.includeDrains}
+                    onChange={(e) =>
+                      setConfig((c) => ({ ...c, includeDrains: e.target.checked }))
+                    }
+                    className="accent-blue-600"
+                  />
+                  <span>Scarichi</span>
+                </label>
+              </div>
+            </div>
+
+            {estimate.plumbing.fixtures.length === 0 ? (
+              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-dashed border-slate-300 dark:border-slate-700 text-xs text-slate-500 text-center">
+                Nessun punto acqua rilevato (Lavabo, WC, Doccia, Vasca, Cucina o Lavatrice). Inseriscili nello <strong>Step 2 (Arredamento)</strong> per calcolare automaticamente i metri di tubo multistrato e gli scarichi.
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-2.5 text-xs">
+                  <div className="p-2.5 rounded-xl bg-sky-50/70 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800">
+                    <div className="text-[11px] text-sky-700 dark:text-sky-300">Acqua Fredda Ø16</div>
+                    <div className="text-base font-bold font-mono text-slate-900 dark:text-white">
+                      {estimate.plumbing.coldBranchMeters} m
+                    </div>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-rose-50/70 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800">
+                    <div className="text-[11px] text-rose-700 dark:text-rose-300">Acqua Calda Ø16</div>
+                    <div className="text-base font-bold font-mono text-slate-900 dark:text-white">
+                      {estimate.plumbing.hotBranchMeters} m
+                    </div>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                    <div className="text-[11px] text-slate-500">Dorsale Ø20</div>
+                    <div className="text-base font-bold font-mono text-slate-900 dark:text-white">
+                      {estimate.plumbing.mainSupplyMeters} m
+                    </div>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                    <div className="text-[11px] text-slate-500">Scarichi Ø40 / Ø50</div>
+                    <div className="text-base font-bold font-mono text-slate-900 dark:text-white">
+                      {estimate.plumbing.drain40_50Meters} m
+                    </div>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                    <div className="text-[11px] text-slate-500">Scarico WC Ø110</div>
+                    <div className="text-base font-bold font-mono text-slate-900 dark:text-white">
+                      {estimate.plumbing.drain110Meters} m
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  Collettore consigliato: <strong>{estimate.plumbing.manifoldWaysCold} vie fredda</strong> +{' '}
+                  <strong>{estimate.plumbing.manifoldWaysHot} vie calda</strong> • Raccordi/curve/terminali stimati:{' '}
+                  <strong>~{estimate.plumbing.estimatedFittings} pz</strong>.
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 dark:bg-slate-800/70 text-slate-500">
+                        <th className="py-2 px-3 text-left rounded-l-lg">Utenza idrica</th>
+                        <th className="py-2 px-3 text-left">Stanza</th>
+                        <th className="py-2 px-3 text-right">Dist. collettore</th>
+                        <th className="py-2 px-3 text-right">Fredda</th>
+                        <th className="py-2 px-3 text-right">Calda</th>
+                        <th className="py-2 px-3 text-right rounded-r-lg">Scarico</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
+                      {estimate.plumbing.fixtures.map((fx) => (
+                        <tr key={fx.id}>
+                          <td className="py-2 px-3 font-medium text-slate-800 dark:text-slate-100">
+                            {fx.name}
+                          </td>
+                          <td className="py-2 px-3 text-slate-500">{fx.roomName}</td>
+                          <td className="py-2 px-3 text-right font-mono text-slate-500">
+                            {fx.distanceFromManifoldM} m
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono font-semibold text-sky-700 dark:text-sky-300">
+                            {fx.coldPipeM} m
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono font-semibold text-rose-600 dark:text-rose-400">
+                            {fx.hotPipeM > 0 ? `${fx.hotPipeM} m` : '—'}
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono text-slate-600 dark:text-slate-300">
+                            {fx.drainPipeM > 0 ? `${fx.drainPipeM} m (Ø${fx.drainDiameterMm})` : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </section>
+        )}
+
+        {/* ================= 3. PITTURA / VERNICE PARETI ================= */}
+        {showPaint && (
+          <section className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                  <Paintbrush className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold text-slate-900 dark:text-white">
+                    3. Vernice / Pittura Pareti — Calcolo m², Litri e Kg
+                  </h2>
+                  <p className="text-[11px] text-slate-500">
+                    Sottrae automaticamente porte, finestre, portefinestre e archi dai muri attivi
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Parametri Pittura */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 text-xs">
+              <label className="space-y-1">
+                <span className="text-[11px] text-slate-500">Tipo pittura</span>
+                <select
+                  value={config.paintType}
+                  onChange={(e) => {
+                    const pt = e.target.value as PaintType;
+                    setConfig((c) => ({
+                      ...c,
+                      paintType: pt,
+                      yieldSqmPerLiter: PAINT_TYPE_PRESETS[pt].defaultYield,
+                      paintDensityKgPerL: PAINT_TYPE_PRESETS[pt].defaultDensity,
+                    }));
+                  }}
+                  className="w-full px-2 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                >
+                  {(Object.keys(PAINT_TYPE_PRESETS) as PaintType[]).map((k) => (
+                    <option key={k} value={k}>
+                      {PAINT_TYPE_PRESETS[k].label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="space-y-1">
+                <span className="text-[11px] text-slate-500">Mani di vernice</span>
+                <select
+                  value={config.coats}
+                  onChange={(e) =>
+                    setConfig((c) => ({ ...c, coats: Number(e.target.value) as 1 | 2 | 3 }))
+                  }
+                  className="w-full px-2 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                >
+                  <option value={1}>1 mano</option>
+                  <option value={2}>2 mani (standard)</option>
+                  <option value={3}>3 mani (cambio colore)</option>
+                </select>
+              </label>
+
+              <label className="space-y-1">
+                <span className="text-[11px] text-slate-500">Facce muri</span>
+                <select
+                  value={config.wallSides}
+                  onChange={(e) =>
+                    setConfig((c) => ({ ...c, wallSides: e.target.value as WallSidesMode }))
+                  }
+                  className="w-full px-2 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                >
+                  <option value="auto">Auto (perim. 1 / interni 2)</option>
+                  <option value="single">Solo 1 lato</option>
+                  <option value="both">Tutti ambo i lati</option>
+                </select>
+              </label>
+
+              <label className="space-y-1">
+                <span className="text-[11px] text-slate-500">Resa (m²/L)</span>
+                <input
+                  type="number"
+                  min={4}
+                  max={18}
+                  step={0.5}
+                  value={config.yieldSqmPerLiter}
+                  onChange={(e) =>
+                    setConfig((c) => ({
+                      ...c,
+                      yieldSqmPerLiter: Math.max(2, Number(e.target.value) || 9),
+                    }))
+                  }
+                  className="w-full px-2 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono"
+                />
+              </label>
+
+              <label className="space-y-1">
+                <span className="text-[11px] text-slate-500">Formato secchio</span>
+                <select
+                  value={config.bucketKg}
+                  onChange={(e) =>
+                    setConfig((c) => ({
+                      ...c,
+                      bucketKg: Number(e.target.value) as 5 | 14 | 20 | 25,
+                    }))
+                  }
+                  className="w-full px-2 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                >
+                  <option value={5}>5 kg (~3,5 L)</option>
+                  <option value={14}>14 kg (~10 L)</option>
+                  <option value={20}>20 kg (~14 L)</option>
+                  <option value={25}>25 kg (~17 L)</option>
+                </select>
+              </label>
+
+              <div className="flex flex-col justify-center gap-1.5 pt-3">
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={config.includeCeiling}
+                    onChange={(e) =>
+                      setConfig((c) => ({ ...c, includeCeiling: e.target.checked }))
+                    }
+                    className="accent-emerald-600"
+                  />
+                  <span>Includi soffitto</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={config.includePrimer}
+                    onChange={(e) =>
+                      setConfig((c) => ({ ...c, includePrimer: e.target.checked }))
+                    }
+                    className="accent-emerald-600"
+                  />
+                  <span>Fissativo / Primer</span>
+                </label>
+              </div>
+            </div>
+
+            {/* Risultati Pittura */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                <div className="text-[11px] text-slate-500">Superficie netta pareti</div>
+                <div className="text-lg font-bold font-mono text-slate-900 dark:text-white">
+                  {estimate.paint.netWallSqm} m²
+                </div>
+                <div className="text-[10px] text-slate-400">
+                  Lorde {estimate.paint.grossWallSqm} m² − aperture {estimate.paint.openingsSubtractedSqm} m²
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                <div className="text-[11px] text-slate-500">Totale da tinteggiare</div>
+                <div className="text-lg font-bold font-mono text-slate-900 dark:text-white">
+                  {estimate.paint.totalSurfaceSqm} m²
+                </div>
+                <div className="text-[10px] text-slate-400">
+                  Soffitto: {estimate.paint.ceilingSqm} m² • {config.coats} mani
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
+                <div className="text-[11px] text-emerald-700 dark:text-emerald-300 font-semibold">
+                  Vernice necessaria (Kg)
+                </div>
+                <div className="text-xl font-bold font-mono text-emerald-800 dark:text-emerald-200">
+                  {estimate.paint.paintKg} kg
+                </div>
+                <div className="text-[10px] text-emerald-700/80 dark:text-emerald-300/80">
+                  {estimate.paint.paintLiters} litri → <strong>{estimate.paint.bucketCount} secchi da {estimate.paint.bucketKg} kg</strong>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                <div className="text-[11px] text-slate-500">Fissativo / Primer</div>
+                <div className="text-lg font-bold font-mono text-slate-900 dark:text-white">
+                  {config.includePrimer ? `${estimate.paint.primerKg} kg` : 'Escluso'}
+                </div>
+                <div className="text-[10px] text-slate-400">
+                  {config.includePrimer ? `${estimate.paint.primerLiters} litri (1 mano)` : 'Attiva la spunta per calcolarlo'}
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* ================= 4. ANALISI GOOGLE GEMINI AI ================= */}
+        {showAi && (
+          <section className="p-5 rounded-2xl bg-gradient-to-br from-violet-50/80 to-indigo-50/60 dark:from-violet-950/30 dark:to-indigo-950/20 border border-violet-200 dark:border-violet-800/70 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-violet-600 text-white flex items-center justify-center">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Analisi Tecnica & Lista Materiali con Google Gemini AI
+                  </h2>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Usa la tua Google Gemini API Key (condivisa con Foto AI) per ottenere schema quadro elettrico, raccordi idraulici e controlli normativi.
+                  </p>
+                </div>
+              </div>
+              <a
+                href="https://aistudio.google.com/apikey"
+                target="_blank"
+                rel="noreferrer"
+                className="text-[11px] text-violet-700 dark:text-violet-300 hover:underline flex items-center gap-1 font-medium"
+              >
+                Ottieni API Key <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+              <label className="space-y-1">
+                <span className="font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                  <KeyRound className="w-3.5 h-3.5 text-violet-600" />
+                  Google Gemini API Key (salvata solo nel browser)
+                </span>
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => handleSaveApiKey(e.target.value)}
+                  placeholder="AIzaSy..."
+                  className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-violet-200 dark:border-violet-800 font-mono text-xs"
+                />
+              </label>
+
+              <label className="space-y-1">
+                <span className="font-medium text-slate-700 dark:text-slate-300">
+                  Note opzionali per l’AI (es. tipo muratura, caldaia, domotica)
+                </span>
+                <input
+                  type="text"
+                  value={aiNotes}
+                  onChange={(e) => setAiNotes(e.target.value)}
+                  placeholder="Es. muratura in forati, 2 condizionatori, scaldasalviette in bagno..."
+                  className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-violet-200 dark:border-violet-800 text-xs"
+                />
+              </label>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={aiLoading}
+                onClick={handleAnalyzeWithGemini}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 disabled:opacity-60 text-white text-xs font-semibold flex items-center gap-2 shadow-sm cursor-pointer"
+              >
+                {aiLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Elaborazione con Google Gemini...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4" />
+                    Genera analisi e lista materiali con Google AI
+                  </>
+                )}
+              </button>
+
+              {aiReport && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(aiReport);
+                    setCopiedAi(true);
+                    setTimeout(() => setCopiedAi(false), 2000);
+                  }}
+                  className="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-violet-200 dark:border-violet-800 text-xs font-semibold text-violet-700 dark:text-violet-300 flex items-center gap-1.5 cursor-pointer"
+                >
+                  {copiedAi ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedAi ? 'Copiato!' : 'Copia relazione'}
+                </button>
+              )}
+            </div>
+
+            {aiError && (
+              <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-xs text-red-700 dark:text-red-300">
+                {aiError}
+              </div>
+            )}
+
+            {aiReport && (
+              <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-violet-200/80 dark:border-violet-800/60 text-xs text-slate-700 dark:text-slate-200 whitespace-pre-wrap leading-relaxed max-h-[420px] overflow-y-auto">
+                {aiReport}
+              </div>
+            )}
+          </section>
+        )}
+
+        <p className="text-[11px] text-slate-400 text-center pb-4">
+          Nota: i valori sono una stima tecnica preliminare utile per preventivi e ordini di massima. Per la posa in opera e le certificazioni (DiCo) fare sempre riferimento a installatori abilitati.
+        </p>
+      </div>
+    </div>
+  );
+};

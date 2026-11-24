@@ -182,6 +182,7 @@ interface ProjectStore {
   toast: ToastMessage | null;
   showShortcutsModal: boolean;
   showCropModal: boolean;
+  selectedRoomId3D: string | null;
 
   // Azioni UI
   setStep: (step: WizardStep) => void;
@@ -200,6 +201,7 @@ interface ProjectStore {
   setSnapAngles: (v: boolean) => void;
   setShowShortcutsModal: (v: boolean) => void;
   setShowCropModal: (v: boolean) => void;
+  setSelectedRoomId3D: (roomId: string | null) => void;
   showToast: (text: string, type?: ToastMessage['type']) => void;
   clearToast: () => void;
 
@@ -313,6 +315,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
     toast: null,
     showShortcutsModal: false,
     showCropModal: false,
+    selectedRoomId3D: null,
 
     setStep: (step) => {
       set((state) => {
@@ -359,6 +362,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
     setSnapAngles: (snapAngles) => set({ snapAngles }),
     setShowShortcutsModal: (showShortcutsModal) => set({ showShortcutsModal }),
     setShowCropModal: (showCropModal) => set({ showCropModal }),
+    setSelectedRoomId3D: (selectedRoomId3D) => set({ selectedRoomId3D }),
 
     showToast: (text, type = 'info') =>
       set({ toast: { id: generateId('toast'), text, type } }),

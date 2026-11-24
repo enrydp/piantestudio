@@ -4,11 +4,13 @@
  */
 import React from 'react';
 import {
+  Calculator,
   Camera,
   Copy,
   Crop,
   DoorClosed,
   DoorOpen,
+  Droplets,
   Eye,
   Footprints,
   Grid,
@@ -18,23 +20,29 @@ import {
   ImageOff,
   Magnet,
   MousePointer2,
+  Paintbrush,
   PenTool,
   RotateCcw,
   RotateCw,
   Ruler,
+  Sparkles,
   Square,
   Trash2,
   ClipboardPaste,
   Columns2,
   LayoutGrid,
   Upload,
+  Zap,
 } from 'lucide-react';
 import { useProjectStore } from '../store/useProjectStore';
 import type { CameraMode3D, OpeningType } from '../types/project';
 import { OPENING_PRESETS } from '../types/project';
+import type { MepTabId } from './MepEstimatorView';
 
 interface LeftToolbarProps {
   onTriggerUploadFloorplan?: () => void;
+  mepTab?: MepTabId;
+  onChangeMepTab?: (tab: MepTabId) => void;
 }
 
 interface ToolButtonProps {
@@ -82,7 +90,11 @@ const ToolButton: React.FC<ToolButtonProps> = ({
   </button>
 );
 
-export const LeftToolbar: React.FC<LeftToolbarProps> = ({ onTriggerUploadFloorplan }) => {
+export const LeftToolbar: React.FC<LeftToolbarProps> = ({
+  onTriggerUploadFloorplan,
+  mepTab = 'all',
+  onChangeMepTab,
+}) => {
   const {
     step,
     activeTool,
@@ -391,6 +403,50 @@ export const LeftToolbar: React.FC<LeftToolbarProps> = ({ onTriggerUploadFloorpl
               icon={cam.icon}
             />
           ))}
+        </>
+      )}
+
+      {/* STEP 4: Sezioni Computo Impianti & Vernice */}
+      {step === 4 && (
+        <>
+          <div className="text-[9px] font-semibold uppercase tracking-wider text-slate-400 text-center">
+            Computo
+          </div>
+          <ToolButton
+            active={mepTab === 'all'}
+            onClick={() => onChangeMepTab?.('all')}
+            title="Visualizza tutte le sezioni"
+            label="Tutto"
+            icon={<Calculator className="w-4 h-4" />}
+          />
+          <ToolButton
+            active={mepTab === 'electrical'}
+            onClick={() => onChangeMepTab?.('electrical')}
+            title="Impianto Elettrico: cavi, sezioni, punti luce e prese"
+            label="Elettrico"
+            icon={<Zap className="w-4 h-4" />}
+          />
+          <ToolButton
+            active={mepTab === 'plumbing'}
+            onClick={() => onChangeMepTab?.('plumbing')}
+            title="Impianto Idraulico: tubi multistrato/PEX/rame e scarichi"
+            label="Idraulico"
+            icon={<Droplets className="w-4 h-4" />}
+          />
+          <ToolButton
+            active={mepTab === 'paint'}
+            onClick={() => onChangeMepTab?.('paint')}
+            title="Pittura pareti: m², litri e kg di vernice"
+            label="Vernice"
+            icon={<Paintbrush className="w-4 h-4" />}
+          />
+          <ToolButton
+            active={mepTab === 'ai'}
+            onClick={() => onChangeMepTab?.('ai')}
+            title="Analisi tecnica con Google Gemini AI"
+            label="Google AI"
+            icon={<Sparkles className="w-4 h-4" />}
+          />
         </>
       )}
     </aside>

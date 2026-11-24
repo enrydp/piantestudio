@@ -3,7 +3,7 @@
  * Tutte le coordinate geometriche (muri, aperture, mobili) sono espresse in METRI REALI.
  */
 
-export type WizardStep = 0 | 1 | 2 | 3;
+export type WizardStep = 0 | 1 | 2 | 3 | 4;
 
 export type Point2D = {
   /** Coordinata X in metri reali */

@@ -11,6 +11,7 @@ import type { FloorTextureType, Opening, Wall } from '../types/project';
 import { buildWallGeometryWithCSG } from '../utils/csg';
 import { getWallsBounds, wallAngleRad, wallLength } from '../utils/geometry';
 import { getFloorTexture } from '../utils/proceduralTextures';
+import type { FloorStrip } from '../utils/rooms';
 
 interface RoomMesh3DProps {
   walls: Wall[];
@@ -20,6 +21,9 @@ interface RoomMesh3DProps {
   wallColor: string;
   showRoof: boolean;
   showDemolishedWalls?: boolean;
+  centerX?: number;
+  centerZ?: number;
+  floorStrips?: FloorStrip[];
 }
 
 const EMPTY_OPENINGS: Opening[] = [];
@@ -293,7 +297,10 @@ const FloorSlab3D: React.FC<{
   floorD: number;
   floorTexture: FloorTextureType;
   floorColor?: string;
-}> = React.memo(({ floorW, floorD, floorTexture, floorColor }) => {
+  centerX: number;
+  centerZ: number;
+  floorStrips?: FloorStrip[];
+}> = React.memo(({ floorW, floorD, floorTexture, floorColor, centerX, centerZ, floorStrips }) => {
   const floorTex = useMemo(
     () => getFloorTexture(floorTexture, floorW / 1.8, floorD / 1.8, floorColor),
     [floorTexture, floorW, floorD, floorColor]
@@ -305,16 +312,41 @@ const FloorSlab3D: React.FC<{
     };
   }, [floorTex]);
 
+  const material = (
+    <meshStandardMaterial
+      key={floorTexture}
+      color="#ffffff"
+      map={floorTex}
+      roughness={floorTexture === 'piastrelle' ? 0.45 : floorTexture === 'parquet' ? 0.6 : 0.78}
+      metalness={0.03}
+    />
+  );
+
+  if (floorStrips && floorStrips.length > 0) {
+    return (
+      <group>
+        {floorStrips.map((strip, idx) => (
+          <mesh
+            key={idx}
+            position={[
+              strip.x + strip.width / 2 - centerX,
+              -0.02,
+              strip.y + strip.height / 2 - centerZ,
+            ]}
+            receiveShadow
+          >
+            <boxGeometry args={[strip.width, 0.04, strip.height]} />
+            {material}
+          </mesh>
+        ))}
+      </group>
+    );
+  }
+
   return (
     <mesh position={[0, -0.02, 0]} receiveShadow>
       <boxGeometry args={[floorW, 0.04, floorD]} />
-      <meshStandardMaterial
-        key={floorTexture}
-        color="#ffffff"
-        map={floorTex}
-        roughness={floorTexture === 'piastrelle' ? 0.45 : floorTexture === 'parquet' ? 0.6 : 0.78}
-        metalness={0.03}
-      />
+      {material}
     </mesh>
   );
 });
@@ -329,8 +361,13 @@ export const RoomMesh3D: React.FC<RoomMesh3DProps> = ({
   wallColor,
   showRoof,
   showDemolishedWalls = false,
+  centerX,
+  centerZ,
+  floorStrips,
 }) => {
   const bounds = useMemo(() => getWallsBounds(walls), [walls]);
+  const effectiveCenterX = centerX ?? bounds.centerX;
+  const effectiveCenterZ = centerZ ?? bounds.centerY;
   const activeWalls = useMemo(() => walls.filter((w) => !w.demolished), [walls]);
   const demolishedWalls = useMemo(() => walls.filter((w) => w.demolished), [walls]);
   const floorW = Math.max(2, bounds.width);
@@ -360,12 +397,15 @@ export const RoomMesh3D: React.FC<RoomMesh3DProps> = ({
         <meshStandardMaterial color="#c6d0db" roughness={0.95} />
       </mesh>
 
-      {/* Soletta pavimento dell'abitazione */}
+      {/* Soletta pavimento dell'abitazione o della singola stanza */}
       <FloorSlab3D
         floorW={floorW}
         floorD={floorD}
         floorTexture={floorTexture}
         floorColor={floorColor}
+        centerX={effectiveCenterX}
+        centerZ={effectiveCenterZ}
+        floorStrips={floorStrips}
       />
 
       {/* Muri attivi con fori CSG (i muri abbattuti sono rimossi) */}
@@ -375,8 +415,8 @@ export const RoomMesh3D: React.FC<RoomMesh3DProps> = ({
           wall={wall}
           openings={openingsByWall.get(wall.id) ?? EMPTY_OPENINGS}
           wallColor={wallColor}
-          centerX={bounds.centerX}
-          centerZ={bounds.centerY}
+          centerX={effectiveCenterX}
+          centerZ={effectiveCenterZ}
         />
       ))}
 
@@ -385,8 +425,8 @@ export const RoomMesh3D: React.FC<RoomMesh3DProps> = ({
         demolishedWalls.map((wall) => {
           const len = wallLength(wall);
           const angle = wallAngleRad(wall);
-          const midX = (wall.start.x + wall.end.x) / 2 - bounds.centerX;
-          const midZ = (wall.start.y + wall.end.y) / 2 - bounds.centerY;
+          const midX = (wall.start.x + wall.end.x) / 2 - effectiveCenterX;
+          const midZ = (wall.start.y + wall.end.y) / 2 - effectiveCenterZ;
           return (
             <mesh
               key={`ghost_${wall.id}`}
@@ -406,10 +446,29 @@ export const RoomMesh3D: React.FC<RoomMesh3DProps> = ({
 
       {/* Soffitto opzionale (nascosto in vista casa di bambola e dall'alto, visibile in prima persona) */}
       {showRoof && walls.length > 0 && (
-        <mesh position={[0, maxWallH + 0.04, 0]} receiveShadow>
-          <boxGeometry args={[floorW, 0.08, floorD]} />
-          <meshStandardMaterial color="#f8fafc" roughness={0.9} />
-        </mesh>
+        floorStrips && floorStrips.length > 0 ? (
+          <group>
+            {floorStrips.map((strip, idx) => (
+              <mesh
+                key={`roof_${idx}`}
+                position={[
+                  strip.x + strip.width / 2 - effectiveCenterX,
+                  maxWallH + 0.04,
+                  strip.y + strip.height / 2 - effectiveCenterZ,
+                ]}
+                receiveShadow
+              >
+                <boxGeometry args={[strip.width, 0.08, strip.height]} />
+                <meshStandardMaterial color="#f8fafc" roughness={0.9} />
+              </mesh>
+            ))}
+          </group>
+        ) : (
+          <mesh position={[0, maxWallH + 0.04, 0]} receiveShadow>
+            <boxGeometry args={[floorW, 0.08, floorD]} />
+            <meshStandardMaterial color="#f8fafc" roughness={0.9} />
+          </mesh>
+        )
       )}
     </group>
   );

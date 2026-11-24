@@ -19,6 +19,7 @@ import { Environment, Grid, Lightformer, OrbitControls } from '@react-three/drei
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { useProjectStore } from '../store/useProjectStore';
 import { getWallsBounds } from '../utils/geometry';
+import { clipWallsAndOpeningsForRoom, detectRooms, type DetectedRoom } from '../utils/rooms';
 import { captureHighResPng, exportSceneToGlb } from '../utils/export3d';
 import { RoomMesh3D } from './RoomMesh3D';
 import { FurnitureMesh3D } from './FurnitureMesh3D';
@@ -72,7 +73,8 @@ function computeSunFromHour(hour: number) {
 const CameraController: React.FC<{
   mode: CameraMode3D;
   sceneRadius: number;
-}> = ({ mode, sceneRadius }) => {
+  focusKey: string;
+}> = ({ mode, sceneRadius, focusKey }) => {
   const { camera, gl } = useThree();
   const orbitRef = useRef<OrbitControlsImpl | null>(null);
   const keysPressed = useRef<Set<string>>(new Set());
@@ -80,9 +82,9 @@ const CameraController: React.FC<{
   const isDraggingLook = useRef(false);
   const lastPointer = useRef({ x: 0, y: 0 });
 
-  // Posizionamento iniziale quando cambia la modalità di vista
+  // Posizionamento iniziale quando cambia la modalità di vista o la stanza selezionata
   useEffect(() => {
-    const r = Math.max(5.5, sceneRadius);
+    const r = Math.max(3.6, sceneRadius);
 
     if (mode === 'orbit') {
       camera.position.set(r * 0.95, r * 0.72, r * 0.95);
@@ -106,12 +108,12 @@ const CameraController: React.FC<{
         orbitRef.current.update();
       }
     } else if (mode === 'first_person') {
-      camera.position.set(0, 1.65, Math.min(1.6, r * 0.25));
+      camera.position.set(0, 1.65, Math.min(1.2, r * 0.22));
       yawPitch.current = { yaw: 0, pitch: -0.05 };
       camera.rotation.order = 'YXZ';
       camera.rotation.set(yawPitch.current.pitch, yawPitch.current.yaw, 0);
     }
-  }, [mode, camera, sceneRadius]);
+  }, [mode, camera, sceneRadius, focusKey]);
 
   // Gestione tastiera WASD e mouse look per Prima Persona
   useEffect(() => {
@@ -236,13 +238,14 @@ SceneEnvironment.displayName = 'SceneEnvironment';
 
 /** Ponte interno per accedere a gl, scene, camera e al gruppo esportabile .glb */
 const SceneContent: React.FC<{
+  activeRoom: DetectedRoom | null;
   exportGroupRef: React.RefObject<THREE.Group>;
   onBindThree: (ctx: {
     gl: THREE.WebGLRenderer;
     scene: THREE.Scene;
     camera: THREE.Camera;
   }) => void;
-}> = ({ exportGroupRef, onBindThree }) => {
+}> = ({ activeRoom, exportGroupRef, onBindThree }) => {
   const { gl, scene, camera } = useThree();
   const { project } = useProjectStore();
   const { walls, openings, furniture, renderSettings } = project;
@@ -251,8 +254,34 @@ const SceneContent: React.FC<{
     onBindThree({ gl, scene, camera });
   }, [gl, scene, camera, onBindThree]);
 
-  const bounds = useMemo(() => getWallsBounds(walls), [walls]);
-  const sceneRadius = Math.max(bounds.width, bounds.height, 6);
+  const allBounds = useMemo(() => getWallsBounds(walls), [walls]);
+
+  // Se è selezionata una singola stanza, isola i suoi muri (ritagliati puliti), aperture, pavimento e mobili
+  const visibleData = useMemo(() => {
+    if (!activeRoom) {
+      return {
+        walls,
+        openings,
+        furniture,
+        centerX: allBounds.centerX,
+        centerZ: allBounds.centerY,
+        sceneRadius: Math.max(allBounds.width, allBounds.height, 6),
+        floorStrips: undefined,
+      };
+    }
+    const clipped = clipWallsAndOpeningsForRoom(walls, openings, activeRoom);
+    const furnSet = new Set(activeRoom.furnitureIds);
+    return {
+      walls: clipped.walls,
+      openings: clipped.openings,
+      furniture: furniture.filter((f) => furnSet.has(f.id)),
+      centerX: activeRoom.bounds.centerX,
+      centerZ: activeRoom.bounds.centerY,
+      sceneRadius: Math.max(activeRoom.bounds.width, activeRoom.bounds.height, 3.6),
+      floorStrips: activeRoom.floorStrips,
+    };
+  }, [activeRoom, walls, openings, furniture, allBounds]);
+
   const sun = useMemo(
     () => computeSunFromHour(renderSettings.timeOfDay),
     [renderSettings.timeOfDay]
@@ -290,24 +319,30 @@ const SceneContent: React.FC<{
       {/* Environment map procedurale per riflessi naturali su vetri, metalli e ceramica */}
       <SceneEnvironment />
 
-      {/* Gruppo completo della casa (esportato in .glb) */}
-      <group ref={exportGroupRef} name="PianteStudio_Casa">
+      {/* Gruppo completo della casa o della singola stanza (esportato in .glb) */}
+      <group
+        ref={exportGroupRef}
+        name={activeRoom ? `PianteStudio_${activeRoom.name}` : 'PianteStudio_Casa'}
+      >
         <RoomMesh3D
-          walls={walls}
-          openings={openings}
+          walls={visibleData.walls}
+          openings={visibleData.openings}
           floorTexture={renderSettings.floorTexture}
           floorColor={renderSettings.floorColor}
           wallColor={renderSettings.wallColor}
           showRoof={showRoof}
-          showDemolishedWalls={Boolean(renderSettings.showDemolishedWalls3D)}
+          showDemolishedWalls={!activeRoom && Boolean(renderSettings.showDemolishedWalls3D)}
+          centerX={visibleData.centerX}
+          centerZ={visibleData.centerZ}
+          floorStrips={visibleData.floorStrips}
         />
 
-        {furniture.map((item) => (
+        {visibleData.furniture.map((item) => (
           <FurnitureMesh3D
             key={item.id}
             item={item}
-            centerX={bounds.centerX}
-            centerZ={bounds.centerY}
+            centerX={visibleData.centerX}
+            centerZ={visibleData.centerZ}
           />
         ))}
       </group>
@@ -324,13 +359,17 @@ const SceneContent: React.FC<{
         />
       )}
 
-      <CameraController mode={renderSettings.cameraMode} sceneRadius={sceneRadius} />
+      <CameraController
+        mode={renderSettings.cameraMode}
+        sceneRadius={visibleData.sceneRadius}
+        focusKey={activeRoom ? activeRoom.id : 'all'}
+      />
     </>
   );
 };
 
 export const Scene3D = forwardRef<Scene3DHandle>((_, ref) => {
-  const { project, showToast } = useProjectStore();
+  const { project, selectedRoomId3D, setSelectedRoomId3D, showToast } = useProjectStore();
   const exportGroupRef = useRef<THREE.Group>(null);
   const threeCtxRef = useRef<{
     gl: THREE.WebGLRenderer;
@@ -338,18 +377,34 @@ export const Scene3D = forwardRef<Scene3DHandle>((_, ref) => {
     camera: THREE.Camera;
   } | null>(null);
 
+  const detectedRooms = useMemo(
+    () => detectRooms(project.walls, project.furniture),
+    [project.walls, project.furniture]
+  );
+
+  const activeRoom = useMemo(
+    () => detectedRooms.find((r) => r.id === selectedRoomId3D) ?? null,
+    [detectedRooms, selectedRoomId3D]
+  );
+
   useImperativeHandle(ref, () => ({
     exportPng: () => {
       const ctx = threeCtxRef.current;
       if (!ctx) return;
       const safeName = (project.name || 'piantestudio').toLowerCase().replace(/[^a-z0-9]+/g, '-');
-      captureHighResPng(ctx.gl, ctx.scene, ctx.camera, `${safeName}-render-3d.png`);
+      const roomSuffix = activeRoom
+        ? `-${activeRoom.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+        : '';
+      captureHighResPng(ctx.gl, ctx.scene, ctx.camera, `${safeName}${roomSuffix}-render-3d.png`);
       showToast('Immagine PNG ad alta risoluzione salvata!', 'success');
     },
     exportGlb: async () => {
       if (!exportGroupRef.current) return;
       const safeName = (project.name || 'piantestudio').toLowerCase().replace(/[^a-z0-9]+/g, '-');
-      await exportSceneToGlb(exportGroupRef.current, `${safeName}-modello-3d.glb`);
+      const roomSuffix = activeRoom
+        ? `-${activeRoom.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+        : '';
+      await exportSceneToGlb(exportGroupRef.current, `${safeName}${roomSuffix}-modello-3d.glb`);
       showToast('Modello 3D (.glb) esportato con successo!', 'success');
     },
     captureDataUrl: () => {
@@ -383,14 +438,59 @@ export const Scene3D = forwardRef<Scene3DHandle>((_, ref) => {
         gl={{ preserveDrawingBuffer: true, antialias: true }}
       >
         <SceneContent
+          activeRoom={activeRoom}
           exportGroupRef={exportGroupRef}
           onBindThree={handleBindThree}
         />
       </Canvas>
 
+      {/* Selettore rapido Tutta la casa / Singola stanza in alto a sinistra */}
+      {detectedRooms.length > 0 && (
+        <div className="absolute top-3 left-3 right-3 flex flex-wrap items-center gap-1.5 pointer-events-none z-10">
+          <div className="pointer-events-auto flex flex-wrap items-center gap-1 p-1 rounded-xl bg-white/92 dark:bg-slate-900/92 backdrop-blur border border-slate-200 dark:border-slate-700 shadow-sm max-w-full">
+            <button
+              type="button"
+              onClick={() => setSelectedRoomId3D(null)}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer ${
+                !activeRoom
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              Tutta la casa
+            </button>
+            {detectedRooms.map((room) => {
+              const isSelected = activeRoom?.id === room.id;
+              return (
+                <button
+                  key={room.id}
+                  type="button"
+                  onClick={() => setSelectedRoomId3D(room.id)}
+                  title={`Visualizza solo ${room.name} (${room.areaSqm} m²)`}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors cursor-pointer ${
+                    isSelected
+                      ? 'bg-blue-600 text-white shadow-xs font-semibold'
+                      : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {room.name}{' '}
+                  <span className={isSelected ? 'text-blue-100 text-[10px]' : 'text-slate-400 text-[10px]'}>
+                    {room.areaSqm} m²
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Badge informativo overlay in basso a sinistra */}
       <div className="absolute bottom-3 left-3 px-3 py-1.5 rounded-xl bg-white/90 dark:bg-slate-900/90 backdrop-blur border border-slate-200 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-200 shadow-sm flex items-center gap-3 pointer-events-none">
         <span className="font-semibold text-blue-600 dark:text-blue-400">
+          {activeRoom ? `${activeRoom.name} (${activeRoom.areaSqm} m²)` : 'Tutta la casa'}
+        </span>
+        <span className="text-slate-400">•</span>
+        <span>
           {mode === 'orbit' && 'Orbita libera'}
           {mode === 'top' && "Vista dall'alto"}
           {mode === 'dollhouse' && 'Casa di bambola'}
@@ -398,17 +498,6 @@ export const Scene3D = forwardRef<Scene3DHandle>((_, ref) => {
         </span>
         <span className="text-slate-400">•</span>
         <span>Sole {hourStr}</span>
-        <span className="text-slate-400">•</span>
-        <span>
-          {project.walls.filter((w) => !w.demolished).length} muri
-          {(() => {
-            const demCount = project.walls.filter((w) => w.demolished).length;
-            return demCount > 0
-              ? ` (${demCount} ${demCount === 1 ? 'abbattuto' : 'abbattuti'})`
-              : '';
-          })()}
-          , {project.openings.length} aperture, {project.furniture.length} mobili
-        </span>
       </div>
 
       {project.walls.length === 0 && (
