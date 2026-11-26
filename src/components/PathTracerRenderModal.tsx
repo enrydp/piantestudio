@@ -157,10 +157,11 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
 
   const [quality, setQuality] = useState<QualityPreset>('high');
+  const [hasStarted, setHasStarted] = useState(false);
   const [exposure, setExposure] = useState(1.12);
   const [sunStrength, setSunStrength] = useState(1.0);
   const [isPaused, setIsPaused] = useState(false);
-  const [isInitializing, setIsInitializing] = useState(true);
+  const [isInitializing, setIsInitializing] = useState(false);
   const [samples, setSamples] = useState(0);
   const [targetSamples, setTargetSamples] = useState(QUALITY_SAMPLES.high.samples);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -186,7 +187,7 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
 
   useEffect(() => {
     const host = canvasHostRef.current;
-    if (!host) return;
+    if (!host || !hasStarted) return;
 
     let cancelled = false;
     let rafId = 0;
@@ -358,7 +359,16 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
       }
       rendererRef.current = null;
     };
-  }, [sourceGroup, sourceCamera, project.renderSettings.timeOfDay, project.renderSettings.renderPreset, quality, sunStrength, runToken]);
+  }, [
+    hasStarted,
+    sourceGroup,
+    sourceCamera,
+    project.renderSettings.timeOfDay,
+    project.renderSettings.renderPreset,
+    quality,
+    sunStrength,
+    runToken,
+  ]);
 
   const progressPct = Math.min(100, Math.round((samples / Math.max(1, targetSamples)) * 100));
   const isDone = !isInitializing && samples >= targetSamples;
@@ -468,14 +478,92 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
           </div>
         </div>
 
-        {/* Viewport Ray-Tracing progressivo */}
+        {/* Viewport Ray-Tracing progressivo (oppure schermata scelta qualità prima di avviare) */}
         <div className="flex-1 min-h-[360px] bg-slate-950 relative flex items-center justify-center overflow-hidden p-3">
           <div
             ref={canvasHostRef}
             className="w-full h-full min-h-[360px] max-h-[64vh] flex items-center justify-center"
           />
 
-          {isInitializing && !errorMsg && (
+          {!hasStarted && (
+            <div className="absolute inset-0 bg-slate-950/92 flex items-center justify-center p-6">
+              <div className="w-full max-w-lg rounded-2xl bg-slate-900 border border-slate-800 p-6 text-center space-y-5 shadow-2xl">
+                <div className="space-y-1.5">
+                  <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center mx-auto shadow-md">
+                    <Camera className="w-5 h-5" />
+                  </div>
+                  <h3 className="text-base font-bold text-white">
+                    Scegli la qualità prima di avviare
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Imposta la qualità del Ray-Tracing (e opzionalmente Sole e Luminosità nella barra in alto), poi clicca <strong>Avvia Render</strong>.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-left">
+                  {(
+                    [
+                      {
+                        id: 'fast' as QualityPreset,
+                        title: 'Veloce',
+                        sub: '36 campioni',
+                        time: '~4–8 sec • prova rapida',
+                      },
+                      {
+                        id: 'high' as QualityPreset,
+                        title: 'Alta Qualità',
+                        sub: '90 campioni',
+                        time: '~12–20 sec • consigliato',
+                      },
+                      {
+                        id: 'ultra' as QualityPreset,
+                        title: 'Ultra HD',
+                        sub: '200 campioni',
+                        time: '~30–50 sec • super pulito',
+                      },
+                    ]
+                  ).map((opt) => {
+                    const active = quality === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setQuality(opt.id)}
+                        className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                          active
+                            ? 'bg-emerald-600/20 border-emerald-400 ring-1 ring-emerald-400 text-white'
+                            : 'bg-slate-800/70 border-slate-700 text-slate-300 hover:border-slate-500'
+                        }`}
+                      >
+                        <div className="text-xs font-bold">{opt.title}</div>
+                        <div className="text-[11px] font-mono text-emerald-300 mt-0.5">
+                          {opt.sub}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-1 leading-tight">
+                          {opt.time}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsPaused(false);
+                    setTargetSamples(QUALITY_SAMPLES[quality].samples);
+                    setHasStarted(true);
+                  }}
+                  className="w-full py-3 px-5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-sm font-bold flex items-center justify-center gap-2 shadow-lg cursor-pointer transition-all"
+                >
+                  <Play className="w-4 h-4 fill-current" />
+                  Avvia Render Fotografico ({QUALITY_SAMPLES[quality].label})
+                </button>
+              </div>
+            </div>
+          )}
+
+          {hasStarted && isInitializing && !errorMsg && (
             <div className="absolute inset-0 bg-slate-950/75 flex flex-col items-center justify-center gap-2.5 text-white text-xs">
               <Loader2 className="w-8 h-8 animate-spin text-emerald-400" />
               <span className="font-semibold">
@@ -494,7 +582,7 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
           )}
 
           {/* Barra di avanzamento campioni in sovrimpressione in basso */}
-          {!isInitializing && !errorMsg && (
+          {hasStarted && !isInitializing && !errorMsg && (
             <div className="absolute bottom-4 left-4 right-4 max-w-md mx-auto bg-slate-900/88 backdrop-blur border border-slate-700/80 rounded-xl px-3.5 py-2 text-white text-[11px] shadow-lg space-y-1.5">
               <div className="flex items-center justify-between">
                 <span className="font-semibold flex items-center gap-1.5">
@@ -528,45 +616,62 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
         {/* Footer Azioni */}
         <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setIsPaused((p) => !p)}
-              disabled={isInitializing || isDone}
-              className="px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-            >
-              {isPaused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
-              {isPaused ? 'Riprendi' : 'Pausa'}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setIsPaused(false);
-                setTargetSamples((t) => t + 50);
-              }}
-              disabled={isInitializing}
-              className="px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-              title="Accumula altri 50 campioni per ombre ancora più lisce e pulite"
-            >
-              +50 campioni
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setIsPaused(false);
-                setRunToken((n) => n + 1);
-              }}
-              className="px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              Riavvia
-            </button>
+            {!hasStarted ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsPaused(false);
+                  setTargetSamples(QUALITY_SAMPLES[quality].samples);
+                  setHasStarted(true);
+                }}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                Avvia Render
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setIsPaused((p) => !p)}
+                  disabled={isInitializing || isDone}
+                  className="px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isPaused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+                  {isPaused ? 'Riprendi' : 'Pausa'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsPaused(false);
+                    setTargetSamples((t) => t + 50);
+                  }}
+                  disabled={isInitializing}
+                  className="px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                  title="Accumula altri 50 campioni per ombre ancora più lisce e pulite"
+                >
+                  +50 campioni
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsPaused(false);
+                    setRunToken((n) => n + 1);
+                  }}
+                  className="px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Riavvia
+                </button>
+              </>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
             {onSendToAiPhoto && (
               <button
                 type="button"
-                disabled={isInitializing || samples < 2}
+                disabled={!hasStarted || isInitializing || samples < 2}
                 onClick={handleSendToAi}
                 className="px-3.5 py-2 rounded-xl border border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/40 hover:bg-violet-100 text-violet-700 dark:text-violet-300 disabled:opacity-40 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
                 title="Opzionale: usa questo render Ray-Tracing come base ultra-fedele per la Foto AI"
@@ -577,7 +682,7 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
             )}
             <button
               type="button"
-              disabled={isInitializing || samples < 1}
+              disabled={!hasStarted || isInitializing || samples < 1}
               onClick={handleDownloadPng}
               className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer"
             >
