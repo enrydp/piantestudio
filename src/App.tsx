@@ -245,7 +245,7 @@ export const App: React.FC = () => {
               externalFileInputRef={fileInputRef}
             />
           ) : step === 3 ? (
-            <Scene3D ref={scene3DRef} />
+            <Scene3D ref={scene3DRef} paused={Boolean(pathTracerSource)} />
           ) : (
             <MepEstimatorView activeTab={mepTab} onChangeTab={setMepTab} />
           )}

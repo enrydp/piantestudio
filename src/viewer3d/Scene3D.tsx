@@ -557,7 +557,11 @@ const SceneContent: React.FC<{
   );
 };
 
-export const Scene3D = forwardRef<Scene3DHandle>((_, ref) => {
+interface Scene3DProps {
+  paused?: boolean;
+}
+
+export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(({ paused = false }, ref) => {
   const { project, selectedRoomId3D, setSelectedRoomId3D, showToast } = useProjectStore();
   const exportGroupRef = useRef<THREE.Group>(null);
   const threeCtxRef = useRef<{
@@ -631,6 +635,7 @@ export const Scene3D = forwardRef<Scene3DHandle>((_, ref) => {
   return (
     <div className="relative w-full h-full bg-slate-200 dark:bg-slate-950 select-none">
       <Canvas
+        frameloop={paused ? 'never' : 'always'}
         shadows
         dpr={[1, 2]}
         camera={{ fov: 44, near: 0.08, far: 160, position: [8, 9, 8] }}

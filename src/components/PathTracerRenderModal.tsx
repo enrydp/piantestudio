@@ -1,11 +1,11 @@
 /**
  * Modale "Render Fotografico HD (Ray-Tracing 100% Locale & Online)":
- * - Usa `three-gpu-pathtracer` su GPU WebGL (zero server, zero API key, funziona anche su GitHub Pages)
- * - Illuminazione architettonica calibrata: DirectionalLight solare fisico (MIS senza rumore) +
- *   cupola cielo soffusa per vera Global Illumination multi-rimbalzo + luci interne calde in modalità serale
- * - Filtro GPU Denoise edge-preserving (`DenoiseMaterial`) attivo di default per superfici lisce
- *   e spigoli nitidi senza grana puntinata
- * - Clona le texture in sicurezza per il contesto WebGL dedicato (parquet, piastrelle, legno, marmo nitidi)
+ * - Usa `three-gpu-pathtracer` su GPU WebGL2 (zero server, zero API key, funziona anche su GitHub Pages)
+ * - Illuminazione architettonica calibrata: DirectionalLight solare fisico (MIS) +
+ *   cupola cielo soffusa per Global Illumination multi-rimbalzo + luci interne calde in modalità serale
+ * - Filtro GPU Denoise edge-preserving (`DenoiseMaterial`) leggero (`radius=2`) per zero blocchi GPU/TDR
+ * - Rendering a tile progressivi (2x2 / 3x3 / 4x4) e gestione pulita del contesto WebGL2 (`forceContextLoss`)
+ *   senza ricreare il renderer al cambio di Sole o Qualità
  */
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
@@ -24,10 +24,13 @@ import { useProjectStore } from '../store/useProjectStore';
 
 type QualityPreset = 'fast' | 'high' | 'ultra';
 
-const QUALITY_SAMPLES: Record<QualityPreset, { label: string; samples: number; scale: number }> = {
-  fast: { label: 'Veloce (40)', samples: 40, scale: 0.85 },
-  high: { label: 'Alta Qualità (100)', samples: 100, scale: 1.0 },
-  ultra: { label: 'Ultra HD (220)', samples: 220, scale: 1.0 },
+const QUALITY_SAMPLES: Record<
+  QualityPreset,
+  { label: string; samples: number; scale: number; tiles: number }
+> = {
+  fast: { label: 'Veloce (40)', samples: 40, scale: 0.85, tiles: 2 },
+  high: { label: 'Alta Qualità (100)', samples: 100, scale: 1.0, tiles: 3 },
+  ultra: { label: 'Ultra HD (220)', samples: 220, scale: 1.0, tiles: 4 },
 };
 
 interface PathTracerRenderModalProps {
@@ -49,6 +52,39 @@ function computeSunDirection(hour: number): THREE.Vector3 {
   ).normalize();
 }
 
+/** Crea un WebGLRenderer leggero e compatibile evitando il cambio GPU ANGLE (`powerPreference: 'default'`) */
+function createSafeWebGLRenderer(): THREE.WebGLRenderer {
+  const canvas = document.createElement('canvas');
+  const contextAttrs: WebGLContextAttributes = {
+    alpha: false,
+    antialias: false, // Il Path Tracing fa già anti-aliasing stocastico nativo: MSAA spreca solo VRAM
+    depth: true,
+    stencil: false,
+    preserveDrawingBuffer: false,
+    powerPreference: 'default',
+    failIfMajorPerformanceCaveat: false,
+  };
+
+  const gl =
+    (canvas.getContext('webgl2', contextAttrs) as WebGL2RenderingContext | null) ||
+    (canvas.getContext('webgl2') as WebGL2RenderingContext | null);
+
+  if (!gl) {
+    throw new Error(
+      'WebGL2 non disponibile o risorse GPU esaurite. Prova a chiudere altre schede 3D/browser o ricarica la pagina.'
+    );
+  }
+
+  return new THREE.WebGLRenderer({
+    canvas,
+    context: gl,
+    antialias: false,
+    alpha: false,
+    preserveDrawingBuffer: false,
+    powerPreference: 'default',
+  });
+}
+
 /** Clona una texture in modo pulito per un contesto WebGL dedicato preservando repeat e colorSpace */
 function cloneTextureForRenderer(
   src: THREE.Texture | null | undefined,
@@ -64,7 +100,7 @@ function cloneTextureForRenderer(
   cloned.repeat.copy(src.repeat);
   cloned.offset.copy(src.offset);
   cloned.colorSpace = src.colorSpace;
-  cloned.anisotropy = 8;
+  cloned.anisotropy = 4;
   cloned.needsUpdate = true;
   cache.set(src, cloned);
   disposables.push(cloned);
@@ -127,7 +163,6 @@ function buildCleanPathTracingScene(
 
     let ptMat: THREE.MeshPhysicalMaterial;
     if (std.transparent && std.opacity < 0.65) {
-      // Vetro finestre trasmissivo pulito: lascia entrare i raggi solari diretti sul pavimento
       ptMat = new THREE.MeshPhysicalMaterial({
         color: new THREE.Color('#f4fbff'),
         roughness: 0.03,
@@ -186,6 +221,7 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
   const { project, showToast } = useProjectStore();
   const canvasHostRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sunLightRef = useRef<THREE.DirectionalLight | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pathTracerRef = useRef<any>(null);
 
@@ -209,10 +245,41 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
   exposureRef.current = exposure;
   const enableDenoiseRef = useRef(enableDenoise);
   enableDenoiseRef.current = enableDenoise;
+  const sunStrengthRef = useRef(sunStrength);
+  sunStrengthRef.current = sunStrength;
+  const qualityRef = useRef(quality);
+  qualityRef.current = quality;
 
+  // Aggiorna qualità live senza distruggere/ricreare il contesto WebGL
   useEffect(() => {
-    setTargetSamples(QUALITY_SAMPLES[quality].samples);
-  }, [quality]);
+    const qCfg = QUALITY_SAMPLES[quality];
+    setTargetSamples(qCfg.samples);
+    const pt = pathTracerRef.current;
+    if (pt && hasStarted) {
+      const prevScale = pt.renderScale;
+      pt.tiles.set(qCfg.tiles, qCfg.tiles);
+      if (prevScale !== qCfg.scale) {
+        pt.renderScale = qCfg.scale;
+        pt.reset();
+        setSamples(0);
+      }
+    }
+  }, [quality, hasStarted]);
+
+  // Aggiorna intensità sole live sul Path Tracer esistente (ZERO ricreazione contesto WebGL!)
+  useEffect(() => {
+    const sunLight = sunLightRef.current;
+    const pt = pathTracerRef.current;
+    if (!sunLight || !pt) return;
+    const isEvening = project.renderSettings.renderPreset === 'evening';
+    sunLight.intensity = (isEvening ? 2.2 : 3.4) * sunStrength;
+    try {
+      pt.updateLights();
+      setSamples(0);
+    } catch {
+      // ignore
+    }
+  }, [sunStrength, project.renderSettings.renderPreset]);
 
   // Ridisegna subito al cambio di esposizione o toggle Denoise senza perdere i campioni accumulati
   useEffect(() => {
@@ -245,11 +312,18 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let denoiseQuad: any = null;
     let disposables: Array<{ dispose: () => void }> = [];
+    let onContextLost: ((e: Event) => void) | null = null;
 
     const start = async () => {
       setIsInitializing(true);
       setErrorMsg(null);
       setSamples(0);
+
+      // Lascia disegnare subito lo spinner di caricamento prima di avviare WebGL/BVH
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      );
+      if (cancelled) return;
 
       try {
         const [{ WebGLPathTracer, ProceduralEquirectTexture, DenoiseMaterial }, { FullScreenQuad }] =
@@ -261,14 +335,11 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
 
         const rect = host.getBoundingClientRect();
         const aspect = Math.max(1.2, Math.min(2.1, rect.width / Math.max(1, rect.height)));
-        const outW = Math.min(1440, Math.max(900, Math.round(rect.width * Math.min(1.5, window.devicePixelRatio || 1))));
+        // Risoluzione equilibrata (max 1152px) per qualità nitida senza saturare la VRAM o attivare il timeout GPU (TDR)
+        const outW = Math.min(1152, Math.max(768, Math.round(rect.width)));
         const outH = Math.round(outW / aspect);
 
-        renderer = new THREE.WebGLRenderer({
-          antialias: true,
-          preserveDrawingBuffer: true,
-          powerPreference: 'high-performance',
-        });
+        renderer = createSafeWebGLRenderer();
         renderer.setPixelRatio(1);
         renderer.setSize(outW, outH, false);
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -277,6 +348,16 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
         renderer.domElement.style.height = '100%';
         renderer.domElement.style.objectFit = 'contain';
         renderer.domElement.style.display = 'block';
+
+        onContextLost = (ev: Event) => {
+          ev.preventDefault();
+          cancelled = true;
+          setIsInitializing(false);
+          setErrorMsg(
+            'La scheda grafica ha interrotto il contesto WebGL (sovraccarico GPU). Prova la qualità "Veloce" oppure premi "Riavvia".'
+          );
+        };
+        renderer.domElement.addEventListener('webglcontextlost', onContextLost, false);
 
         // Fix compatibilità Three.js 0.169 + three-gpu-pathtracer 0.0.23 (passa sempre una camera)
         const fallbackCam = new THREE.PerspectiveCamera();
@@ -303,16 +384,17 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
         const ptScene = built.scene;
         disposables = built.disposables;
 
-        // 2. Luce solare direzionale fisica esplicita (MIS: ombre pulite e contrasto caldo senza rumore!)
+        // 2. Luce solare direzionale fisica esplicita (MIS: ombre pulite e contrasto caldo)
         const sunLight = new THREE.DirectionalLight(
           isEvening ? '#ffaa66' : '#fff3de',
-          (isEvening ? 2.2 : 3.4) * sunStrength
+          (isEvening ? 2.2 : 3.4) * sunStrengthRef.current
         );
         sunLight.position.copy(sunDir).multiplyScalar(25);
         ptScene.add(sunLight);
+        sunLightRef.current = sunLight;
 
-        // 3. Cupola cielo calibrata (luce morbida diffusa per GI & ombre negli angoli, senza bruciare i contrasti)
-        const env = new ProceduralEquirectTexture(256, 128);
+        // 3. Cupola cielo calibrata (luce morbida diffusa per GI & ombre negli angoli)
+        const env = new ProceduralEquirectTexture(128, 64);
         const topSky = new THREE.Color(isEvening ? '#18243d' : '#c4dff7');
         const horizonSky = new THREE.Color(isEvening ? '#d47c4a' : '#f7f1e6');
         const groundBounce = new THREE.Color(isEvening ? '#1c1816' : '#c9c0b3');
@@ -347,29 +429,30 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
         }
         ptCamera.updateMatrixWorld(true);
 
-        // 5. Filtro GPU Smart Denoiser edge-preserving (pulisce la grana mantenendo nitidi gli spigoli!)
+        // 5. Filtro GPU Smart Denoiser leggero (`sigma <= 2.2`, radius=2 => 13 tap, veloce su tutte le GPU)
         const denoiseMat = new DenoiseMaterial({
-          sigma: 3.4,
+          sigma: 2.0,
           kSigma: 1.0,
-          threshold: 0.075,
+          threshold: 0.065,
         });
         denoiseQuad = new FullScreenQuad(denoiseMat);
         disposables.push(denoiseMat);
 
+        const qCfg = QUALITY_SAMPLES[qualityRef.current];
         pathTracer = new WebGLPathTracer(renderer);
-        pathTracer.bounces = 5;
-        pathTracer.transmissiveBounces = 4;
+        pathTracer.bounces = 4;
+        pathTracer.transmissiveBounces = 3;
         pathTracer.filterGlossyFactor = 0.65;
         pathTracer.multipleImportanceSampling = true;
-        pathTracer.renderScale = QUALITY_SAMPLES[quality].scale;
-        pathTracer.tiles.set(quality === 'fast' ? 1 : 2, quality === 'fast' ? 1 : 2);
+        pathTracer.renderScale = qCfg.scale;
+        pathTracer.tiles.set(qCfg.tiles, qCfg.tiles);
         pathTracer.renderDelay = 0;
         pathTracer.minSamples = 1;
         pathTracer.fadeDuration = 0;
         pathTracer.rasterizeScene = false;
-        pathTracer.textureSize.set(1024, 1024);
+        // 512x512 riduce di 4x la VRAM dell'array texture evitando errori di allocazione GPU
+        pathTracer.textureSize.set(512, 512);
 
-        // Passaggio finale su schermo con GPU Denoise attivo (o diretto se disattivato dall'utente)
         pathTracer.renderToCanvasCallback = (
           target: THREE.WebGLRenderTarget,
           r: THREE.WebGLRenderer,
@@ -377,11 +460,10 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
         ) => {
           const prevAutoClear = r.autoClear;
           r.autoClear = false;
-          if (enableDenoiseRef.current && denoiseQuad && pathTracer.samples >= 3) {
-            // Riduce leggermente il raggio denoise man mano che i campioni aumentano per preservare micro-dettagli
+          if (enableDenoiseRef.current && denoiseQuad && pathTracer.samples >= 2) {
             const s = pathTracer.samples;
-            denoiseMat.sigma = s > 100 ? 2.1 : s > 40 ? 2.8 : 3.6;
-            denoiseMat.threshold = s > 100 ? 0.045 : s > 40 ? 0.065 : 0.085;
+            denoiseMat.sigma = s > 90 ? 1.65 : s > 35 ? 1.95 : 2.15;
+            denoiseMat.threshold = s > 90 ? 0.045 : s > 35 ? 0.06 : 0.075;
             denoiseMat.map = target.texture;
             denoiseQuad.render(r);
           } else {
@@ -435,6 +517,9 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
     return () => {
       cancelled = true;
       if (rafId) window.cancelAnimationFrame(rafId);
+      if (renderer && onContextLost) {
+        renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
+      }
       try {
         denoiseQuad?.dispose();
       } catch {
@@ -454,11 +539,18 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
         }
       }
       if (renderer) {
+        try {
+          // Rilascia subito lo slot del contesto WebGL2 nel browser per evitare "Error creating WebGL context"
+          renderer.forceContextLoss();
+        } catch {
+          // ignore
+        }
         renderer.dispose();
         renderer.domElement.remove();
       }
       rendererRef.current = null;
       pathTracerRef.current = null;
+      sunLightRef.current = null;
     };
   }, [
     hasStarted,
@@ -466,18 +558,33 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
     sourceCamera,
     project.renderSettings.timeOfDay,
     project.renderSettings.renderPreset,
-    quality,
-    sunStrength,
     runToken,
   ]);
 
   const progressPct = Math.min(100, Math.round((samples / Math.max(1, targetSamples)) * 100));
   const isDone = !isInitializing && samples >= targetSamples;
 
-  const handleDownloadPng = () => {
+  /** Cattura il frame corrente in PNG ridisegnando sul buffer appena prima di toDataURL (compatibile con preserveDrawingBuffer=false) */
+  const captureCurrentFrameDataUrl = (): string | null => {
     const r = rendererRef.current;
-    if (!r) return;
-    const dataUrl = r.domElement.toDataURL('image/png', 1.0);
+    const pt = pathTracerRef.current;
+    if (!r) return null;
+    if (pt && pt.samples >= 1) {
+      const prevPause = pt.pausePathTracing;
+      pt.pausePathTracing = true;
+      try {
+        pt.renderSample();
+      } catch {
+        // ignore
+      }
+      pt.pausePathTracing = prevPause;
+    }
+    return r.domElement.toDataURL('image/png', 1.0);
+  };
+
+  const handleDownloadPng = () => {
+    const dataUrl = captureCurrentFrameDataUrl();
+    if (!dataUrl) return;
     const a = document.createElement('a');
     const safeName = (project.name || 'piantestudio').toLowerCase().replace(/[^a-z0-9]+/g, '-');
     a.href = dataUrl;
@@ -487,9 +594,8 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
   };
 
   const handleSendToAi = () => {
-    const r = rendererRef.current;
-    if (!r || !onSendToAiPhoto) return;
-    const dataUrl = r.domElement.toDataURL('image/png', 1.0);
+    const dataUrl = captureCurrentFrameDataUrl();
+    if (!dataUrl || !onSendToAiPhoto) return;
     onSendToAiPhoto(dataUrl);
   };
 
@@ -623,13 +729,13 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
                         id: 'high' as QualityPreset,
                         title: 'Alta Qualità',
                         sub: '100 campioni',
-                        time: '~12–22 sec • consigliato',
+                        time: '~12–25 sec • consigliato',
                       },
                       {
                         id: 'ultra' as QualityPreset,
                         title: 'Ultra HD',
                         sub: '220 campioni',
-                        time: '~30–55 sec • massima resa',
+                        time: '~30–60 sec • massima resa',
                       },
                     ]
                   ).map((opt) => {
@@ -683,11 +789,23 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
           )}
 
           {errorMsg && (
-            <div className="absolute inset-0 bg-slate-950/90 flex flex-col items-center justify-center gap-2 p-6 text-center text-xs text-red-300 max-w-md mx-auto">
+            <div className="absolute inset-0 bg-slate-950/90 flex flex-col items-center justify-center gap-3 p-6 text-center text-xs text-red-300 max-w-md mx-auto">
               <p className="font-semibold text-sm text-white">
                 Impossibile eseguire il Ray-Tracing WebGL
               </p>
               <p>{errorMsg}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setQuality('fast');
+                  setErrorMsg(null);
+                  setIsPaused(false);
+                  setRunToken((n) => n + 1);
+                }}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold cursor-pointer"
+              >
+                Riprova in modalità Veloce (leggera)
+              </button>
             </div>
           )}
 
@@ -765,6 +883,7 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
                   type="button"
                   onClick={() => {
                     setIsPaused(false);
+                    setErrorMsg(null);
                     setRunToken((n) => n + 1);
                   }}
                   className="px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
