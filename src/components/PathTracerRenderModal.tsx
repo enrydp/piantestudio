@@ -155,6 +155,8 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
   const { project, showToast } = useProjectStore();
   const canvasHostRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pathTracerRef = useRef<any>(null);
 
   const [quality, setQuality] = useState<QualityPreset>('high');
   const [hasStarted, setHasStarted] = useState(false);
@@ -178,10 +180,21 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
     setTargetSamples(QUALITY_SAMPLES[quality].samples);
   }, [quality]);
 
-  // Aggiorna esposizione live senza riavviare i campioni
+  // Aggiorna esposizione live senza riavviare i campioni (ridisegna subito anche a render completato)
   useEffect(() => {
-    if (rendererRef.current) {
-      rendererRef.current.toneMappingExposure = exposure;
+    const r = rendererRef.current;
+    const pt = pathTracerRef.current;
+    if (!r) return;
+    r.toneMappingExposure = exposure;
+    if (pt && pt.samples >= 1) {
+      const prevPause = pt.pausePathTracing;
+      pt.pausePathTracing = true;
+      try {
+        pt.renderSample();
+      } catch {
+        // ignore
+      }
+      pt.pausePathTracing = prevPause;
     }
   }, [exposure]);
 
@@ -225,6 +238,20 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
         renderer.domElement.style.height = '100%';
         renderer.domElement.style.objectFit = 'contain';
         renderer.domElement.style.display = 'block';
+
+        // Fix compatibilità Three.js 0.169 + three-gpu-pathtracer 0.0.23:
+        // PathTracingRenderer chiama renderer.compileAsync(mesh) senza passare la camera,
+        // causando un'eccezione silenziosa che bloccava isCompiling=true (fermo allo 0%).
+        const fallbackCam = new THREE.PerspectiveCamera();
+        const activeRenderer = renderer;
+        activeRenderer.compileAsync = (sceneArg, camArg, targetScene) => {
+          try {
+            activeRenderer.compile(sceneArg, camArg ?? fallbackCam, targetScene);
+          } catch {
+            // Il materiale verrà compilato normalmente al primo draw call WebGL
+          }
+          return Promise.resolve(sceneArg);
+        };
 
         host.innerHTML = '';
         host.appendChild(renderer.domElement);
@@ -300,10 +327,12 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
         pathTracer.filterGlossyFactor = 0.5;
         pathTracer.multipleImportanceSampling = true;
         pathTracer.renderScale = QUALITY_SAMPLES[quality].scale;
-        pathTracer.tiles.set(2, 2);
+        pathTracer.tiles.set(quality === 'fast' ? 1 : 2, quality === 'fast' ? 1 : 2);
+        pathTracer.renderDelay = 0;
         pathTracer.minSamples = 1;
         pathTracer.fadeDuration = 0;
         pathTracer.rasterizeScene = false;
+        pathTracerRef.current = pathTracer;
 
         pathTracer.setScene(ptScene, ptCamera);
         if (cancelled) return;
@@ -317,9 +346,18 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
           if (isPausedRef.current) return;
           if (pathTracer.samples >= targetSamplesRef.current) return;
 
-          pathTracer.renderSample();
-          const cur = Math.floor(pathTracer.samples);
-          setSamples((prev) => (prev !== cur ? cur : prev));
+          try {
+            pathTracer.renderSample();
+            const cur = Number(pathTracer.samples.toFixed(1));
+            setSamples((prev) => (prev !== cur ? cur : prev));
+          } catch (loopErr) {
+            cancelled = true;
+            setErrorMsg(
+              loopErr instanceof Error
+                ? loopErr.message
+                : 'Errore WebGL durante il calcolo Ray-Tracing.'
+            );
+          }
         };
 
         rafId = window.requestAnimationFrame(renderLoop);
@@ -358,6 +396,7 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
         renderer.domElement.remove();
       }
       rendererRef.current = null;
+      pathTracerRef.current = null;
     };
   }, [
     hasStarted,
