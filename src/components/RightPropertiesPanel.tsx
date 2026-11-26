@@ -1475,6 +1475,79 @@ export const RightPropertiesPanel: React.FC<RightPropertiesPanelProps> = ({
               </section>
             )}
 
+            {/* Stile Rendering & Atmosfera 3D */}
+            <section className="space-y-2.5 pb-4 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-violet-500" />
+                  Qualità & Atmosfera 3D
+                </h3>
+                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300">
+                  PBR HD
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                {(
+                  [
+                    { id: 'realistic', label: 'Realistico', desc: 'Cielo + PBR + AO' },
+                    { id: 'studio', label: 'Studio', desc: 'Catalogo chiaro' },
+                    { id: 'evening', label: 'Serale', desc: 'Luci calde' },
+                  ] as const
+                ).map((p) => {
+                  const active = (project.renderSettings.renderPreset ?? 'realistic') === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => updateRenderSettings({ renderPreset: p.id })}
+                      className={`p-2 rounded-xl border text-left transition-all cursor-pointer ${
+                        active
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                          : 'border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      <div className="text-[11px] font-semibold leading-tight">{p.label}</div>
+                      <div
+                        className={`text-[9px] mt-0.5 leading-tight ${
+                          active ? 'text-blue-100' : 'text-slate-400'
+                        }`}
+                      >
+                        {p.desc}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="space-y-1.5 pt-1">
+                <label className="flex items-center justify-between cursor-pointer">
+                  <span className="text-[11px] text-slate-600 dark:text-slate-300">
+                    Luci calde interne nelle stanze
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={project.renderSettings.interiorLights ?? true}
+                    onChange={(e) =>
+                      updateRenderSettings({ interiorLights: e.target.checked })
+                    }
+                    className="accent-blue-600 rounded"
+                  />
+                </label>
+                <label className="flex items-center justify-between cursor-pointer">
+                  <span className="text-[11px] text-slate-600 dark:text-slate-300">
+                    Battiscopa architettonico pareti
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={project.renderSettings.showBaseboards ?? true}
+                    onChange={(e) =>
+                      updateRenderSettings({ showBaseboards: e.target.checked })
+                    }
+                    className="accent-blue-600 rounded"
+                  />
+                </label>
+              </div>
+            </section>
+
             {/* Illuminazione e ora del giorno */}
             <section className="space-y-2.5 pb-4 border-b border-slate-200 dark:border-slate-800">
               <div className="flex items-center justify-between">

@@ -25,10 +25,15 @@ import type {
   Wall,
   WizardStep,
 } from '../types/project';
+import rawCatalog from '../data/furnitureCatalog.json';
 import { OPENING_PRESETS } from '../types/project';
 import { autoAlignWalls } from '../utils/geometry';
 import { DEFAULT_FLOOR_COLORS } from '../utils/proceduralTextures';
 import type { AutoRoomType } from '../utils/autoFurnish';
+
+const CHAIR_CATALOG_ITEM = (rawCatalog as FurnitureCatalogItem[]).find(
+  (c) => c.tipoGeometria === 'chair'
+);
 
 const STORAGE_KEY = 'piantestudio_project_v1';
 const THEME_KEY = 'piantestudio_theme_v1';
@@ -54,6 +59,9 @@ export const DEFAULT_RENDER_SETTINGS: RenderSettings = {
   wallColor: '#f5f2eb',
   showGrid3D: false,
   showDemolishedWalls3D: false,
+  renderPreset: 'realistic',
+  interiorLights: true,
+  showBaseboards: true,
 };
 
 export function createEmptyProject(): ProjectData {
@@ -251,6 +259,7 @@ interface ProjectStore {
   moveFurnitureBatch: (deltas: Record<string, Point2D>, recordHistory?: boolean) => void;
   rotateSelectedFurniture: (deltaDeg: number) => void;
   deleteSelectedFurniture: () => void;
+  deleteFurnitureIds: (ids: string[]) => void;
   copySelectedFurniture: () => void;
   pasteFurniture: () => void;
   selectFurniture: (ids: string[]) => void;
@@ -846,8 +855,70 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
             : undefined,
         customGlbUrl: item.glbUrl,
       };
-      commit((p) => ({ ...p, furniture: [...p.furniture, furn] }));
-      set({ selectedFurnitureIds: [furn.id] });
+
+      const added: Furniture[] = [furn];
+
+      // Quando si aggiunge un tavolo da pranzo (rettangolare o rotondo), inserisci automaticamente le 4 sedie attorno
+      if (
+        (item.tipoGeometria === 'dining_table' ||
+          item.tipoGeometria === 'dining_table_round') &&
+        CHAIR_CATALOG_ITEM
+      ) {
+        const cw = CHAIR_CATALOG_ITEM.dimensioni.width / 100;
+        const cd = CHAIR_CATALOG_ITEM.dimensioni.depth / 100;
+        const ch = CHAIR_CATALOG_ITEM.dimensioni.height / 100;
+        const gap = 0.04; // 4 cm di luce per evitare falsi avvisi di sovrapposizione
+
+        const chairPlacements: Array<{ cx: number; cy: number; rot: number }> =
+          item.tipoGeometria === 'dining_table_round'
+            ? (() => {
+                const dist = Math.max(furn.width, furn.depth) / 2 + cd / 2 + gap;
+                return [
+                  { cx: x, cy: y - dist, rot: 0 },
+                  { cx: x, cy: y + dist, rot: 180 },
+                  { cx: x - dist, cy: y, rot: 270 },
+                  { cx: x + dist, cy: y, rot: 90 },
+                ];
+              })()
+            : (() => {
+                const offsetX = Math.max(cw * 0.65, Math.min(0.42, furn.width * 0.26));
+                const offsetY = furn.depth / 2 + cd / 2 + gap;
+                return [
+                  { cx: x - offsetX, cy: y - offsetY, rot: 0 },
+                  { cx: x + offsetX, cy: y - offsetY, rot: 0 },
+                  { cx: x - offsetX, cy: y + offsetY, rot: 180 },
+                  { cx: x + offsetX, cy: y + offsetY, rot: 180 },
+                ];
+              })();
+
+        for (const p of chairPlacements) {
+          added.push({
+            id: generateId('furn'),
+            catalogId: CHAIR_CATALOG_ITEM.id,
+            name: CHAIR_CATALOG_ITEM.nome,
+            category: CHAIR_CATALOG_ITEM.categoria,
+            geometryType: CHAIR_CATALOG_ITEM.tipoGeometria,
+            x: Number(p.cx.toFixed(3)),
+            y: Number(p.cy.toFixed(3)),
+            width: cw,
+            depth: cd,
+            height: ch,
+            rotation: p.rot,
+            color: CHAIR_CATALOG_ITEM.coloreDefault,
+            material: CHAIR_CATALOG_ITEM.materialeDefault,
+            customGlbUrl: CHAIR_CATALOG_ITEM.glbUrl,
+          });
+        }
+      }
+
+      commit((p) => ({ ...p, furniture: [...p.furniture, ...added] }));
+      set({ selectedFurnitureIds: added.map((f) => f.id) });
+      if (added.length > 1) {
+        get().showToast(
+          `Inserito "${furn.name}" con ${added.length - 1} sedie: trascina o ruota (R) per muoverli insieme!`,
+          'success'
+        );
+      }
       return furn;
     },
 
@@ -908,25 +979,57 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
       const ids = get().selectedFurnitureIds;
       if (ids.length === 0) return;
       const idSet = new Set(ids);
-      commit((p) => ({
-        ...p,
-        furniture: p.furniture.map((f) =>
-          idSet.has(f.id)
-            ? { ...f, rotation: ((f.rotation + deltaDeg) % 360 + 360) % 360 }
-            : f
-        ),
-      }));
+      commit((p) => {
+        const selected = p.furniture.filter((f) => idSet.has(f.id));
+        if (selected.length <= 1) {
+          return {
+            ...p,
+            furniture: p.furniture.map((f) =>
+              idSet.has(f.id)
+                ? { ...f, rotation: (((f.rotation + deltaDeg) % 360) + 360) % 360 }
+                : f
+            ),
+          };
+        }
+        // Con selezione multipla (es. tavolo + sedie) ruota il gruppo intero attorno al baricentro comune
+        const cx = selected.reduce((s, f) => s + f.x, 0) / selected.length;
+        const cy = selected.reduce((s, f) => s + f.y, 0) / selected.length;
+        const rad = (deltaDeg * Math.PI) / 180;
+        const cosA = Math.cos(rad);
+        const sinA = Math.sin(rad);
+        return {
+          ...p,
+          furniture: p.furniture.map((f) => {
+            if (!idSet.has(f.id)) return f;
+            const dx = f.x - cx;
+            const dy = f.y - cy;
+            return {
+              ...f,
+              x: Number((cx + dx * cosA - dy * sinA).toFixed(3)),
+              y: Number((cy + dx * sinA + dy * cosA).toFixed(3)),
+              rotation: (((f.rotation + deltaDeg) % 360) + 360) % 360,
+            };
+          }),
+        };
+      });
     },
 
     deleteSelectedFurniture: () => {
       const ids = get().selectedFurnitureIds;
+      if (ids.length === 0) return;
+      get().deleteFurnitureIds(ids);
+    },
+
+    deleteFurnitureIds: (ids) => {
       if (ids.length === 0) return;
       const idSet = new Set(ids);
       commit((p) => ({
         ...p,
         furniture: p.furniture.filter((f) => !idSet.has(f.id)),
       }));
-      set({ selectedFurnitureIds: [] });
+      set((s) => ({
+        selectedFurnitureIds: s.selectedFurnitureIds.filter((id) => !idSet.has(id)),
+      }));
     },
 
     copySelectedFurniture: () => {

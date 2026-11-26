@@ -15,7 +15,7 @@ import React, {
 } from 'react';
 import * as THREE from 'three';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Environment, Grid, Lightformer, OrbitControls } from '@react-three/drei';
+import { ContactShadows, Environment, Grid, Lightformer, OrbitControls, Sky } from '@react-three/drei';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { useProjectStore } from '../store/useProjectStore';
 import { getWallsBounds } from '../utils/geometry';
@@ -23,7 +23,7 @@ import { clipWallsAndOpeningsForRoom, detectRooms, type DetectedRoom } from '../
 import { captureHighResPng, exportSceneToGlb } from '../utils/export3d';
 import { RoomMesh3D } from './RoomMesh3D';
 import { FurnitureMesh3D } from './FurnitureMesh3D';
-import type { CameraMode3D } from '../types/project';
+import type { CameraMode3D, RenderStylePreset } from '../types/project';
 
 export interface Scene3DHandle {
   exportPng: () => void;
@@ -205,50 +205,89 @@ const CameraController: React.FC<{
   );
 };
 
-/** Environment map procedurale memoizzata: non si ricarica al cambio di pavimento/materiali */
-const SceneEnvironment: React.FC = React.memo(() => (
-  <Environment resolution={256} frames={2}>
-    <Lightformer
-      form="rect"
-      intensity={1.8}
-      color="#fffaf0"
-      position={[0, 10, 0]}
-      rotation={[Math.PI / 2, 0, 0]}
-      scale={[16, 16, 1]}
-    />
-    <Lightformer
-      form="ring"
-      intensity={1.2}
-      color="#cfe6ff"
-      position={[10, 5, 10]}
-      scale={[8, 8, 1]}
-    />
-    <Lightformer
-      form="rect"
-      intensity={0.7}
-      color="#e2d9cc"
-      position={[-10, 3, -8]}
-      rotation={[0, Math.PI / 4, 0]}
-      scale={[12, 6, 1]}
-    />
-  </Environment>
-));
+/** Sincronizza toneMappingExposure sul renderer WebGL senza rimontare il canvas */
+const ToneMappingSync: React.FC<{ exposure: number }> = ({ exposure }) => {
+  const { gl } = useThree();
+  useEffect(() => {
+    gl.toneMapping = THREE.ACESFilmicToneMapping;
+    gl.toneMappingExposure = exposure;
+  }, [gl, exposure]);
+  return null;
+};
+
+/** Environment map procedurale architettonica ad alto contrasto (riflessi naturali su vetri, metalli, marmo e parquet) */
+const SceneEnvironment: React.FC<{ preset: RenderStylePreset }> = React.memo(({ preset }) => {
+  const isEvening = preset === 'evening';
+  const isStudio = preset === 'studio';
+  return (
+    <Environment resolution={256} frames={1}>
+      {/* Cupola cielo zenitale morbida */}
+      <Lightformer
+        form="rect"
+        intensity={isEvening ? 0.55 : isStudio ? 2.4 : 1.9}
+        color={isEvening ? '#4c5f8a' : isStudio ? '#ffffff' : '#eef6ff'}
+        position={[0, 12, 0]}
+        rotation={[Math.PI / 2, 0, 0]}
+        scale={[22, 22, 1]}
+      />
+      {/* Disco solare caldo per riflessi speculari netti */}
+      <Lightformer
+        form="circle"
+        intensity={isEvening ? 2.8 : isStudio ? 2.2 : 3.2}
+        color={isEvening ? '#ff9d5c' : '#fff4de'}
+        position={[12, isEvening ? 4 : 9, 10]}
+        scale={[5, 5, 1]}
+      />
+      {/* Riflesso finestra / cielo laterale fresco */}
+      <Lightformer
+        form="rect"
+        intensity={isEvening ? 0.7 : 1.5}
+        color={isEvening ? '#64748b' : '#cfe6ff'}
+        position={[-12, 5, 8]}
+        rotation={[0, Math.PI / 3, 0]}
+        scale={[14, 7, 1]}
+      />
+      {/* Rimbalzo parete calda opposta */}
+      <Lightformer
+        form="rect"
+        intensity={isEvening ? 1.1 : 0.9}
+        color={isEvening ? '#ffbe76' : '#f2e7d8'}
+        position={[8, 3, -12]}
+        rotation={[0, -Math.PI / 5, 0]}
+        scale={[14, 6, 1]}
+      />
+      {/* Rimbalzo pavimento morbido */}
+      <Lightformer
+        form="rect"
+        intensity={0.45}
+        color="#d8cbb8"
+        position={[0, -6, 0]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        scale={[20, 20, 1]}
+      />
+    </Environment>
+  );
+});
 
 SceneEnvironment.displayName = 'SceneEnvironment';
 
 /** Ponte interno per accedere a gl, scene, camera e al gruppo esportabile .glb */
 const SceneContent: React.FC<{
   activeRoom: DetectedRoom | null;
+  detectedRooms: DetectedRoom[];
   exportGroupRef: React.RefObject<THREE.Group>;
   onBindThree: (ctx: {
     gl: THREE.WebGLRenderer;
     scene: THREE.Scene;
     camera: THREE.Camera;
   }) => void;
-}> = ({ activeRoom, exportGroupRef, onBindThree }) => {
+}> = ({ activeRoom, detectedRooms, exportGroupRef, onBindThree }) => {
   const { gl, scene, camera } = useThree();
   const { project } = useProjectStore();
   const { walls, openings, furniture, renderSettings } = project;
+  const preset: RenderStylePreset = renderSettings.renderPreset ?? 'realistic';
+  const interiorLightsOn = renderSettings.interiorLights ?? true;
+  const showBaseboards = renderSettings.showBaseboards ?? true;
 
   useEffect(() => {
     onBindThree({ gl, scene, camera });
@@ -282,42 +321,149 @@ const SceneContent: React.FC<{
     };
   }, [activeRoom, walls, openings, furniture, allBounds]);
 
-  const sun = useMemo(
-    () => computeSunFromHour(renderSettings.timeOfDay),
-    [renderSettings.timeOfDay]
-  );
+  // In modalità serale forza luce tramonto calda, altrimenti usa lo slider ora del giorno
+  const effectiveHour = preset === 'evening' ? 19.35 : renderSettings.timeOfDay;
+  const sun = useMemo(() => computeSunFromHour(effectiveHour), [effectiveHour]);
+
+  // Frustum ombre adattato alle dimensioni reali della scena: texel 3× più nitidi sui mobili!
+  const shadowHalf = Math.min(22, Math.max(6.5, visibleData.sceneRadius * 1.08));
 
   // Tetto visibile solo in prima persona, nascosto in casa di bambola / dall'alto / orbita
   const showRoof = renderSettings.cameraMode === 'first_person';
 
+  // Calcola punti luce interni (max 6 stanze principali per fluidità WebGL)
+  const roomLights = useMemo(() => {
+    if (!interiorLightsOn) return [];
+    const targetRooms = activeRoom ? [activeRoom] : detectedRooms.slice(0, 6);
+    const wallH = walls.reduce((m, w) => Math.max(m, w.height), 2.7);
+    return targetRooms.map((rm) => ({
+      id: rm.id,
+      x: rm.bounds.centerX - visibleData.centerX,
+      y: Math.max(2.1, wallH - 0.28),
+      z: rm.bounds.centerY - visibleData.centerZ,
+      radius: Math.max(4.5, Math.hypot(rm.bounds.width, rm.bounds.height) * 0.95),
+    }));
+  }, [interiorLightsOn, activeRoom, detectedRooms, walls, visibleData.centerX, visibleData.centerZ]);
+
+  // Chiave leggera per ricalcolare ContactShadows solo quando cambia il layout
+  const contactKey = `${activeRoom?.id ?? 'all'}_${visibleData.walls.length}_${visibleData.furniture.length}_${visibleData.furniture
+    .map((f) => `${Math.round(f.x * 10)}_${Math.round(f.y * 10)}_${Math.round(f.rotation)}`)
+    .join('|')}`;
+
+  const bgColor =
+    preset === 'studio'
+      ? '#edf2f7'
+      : preset === 'evening'
+        ? '#1e293b'
+        : sun.skyColor;
+
+  const exposure = preset === 'studio' ? 1.12 : preset === 'evening' ? 1.02 : 1.08;
+  const mainSunIntensity =
+    preset === 'evening'
+      ? 0.95
+      : preset === 'studio'
+        ? sun.sunIntensity * 0.95
+        : sun.sunIntensity * 1.25;
+  const roomLightIntensity =
+    preset === 'evening' ? 3.2 : showRoof ? 1.35 : preset === 'studio' ? 0.5 : 0.72;
+
   return (
     <>
-      <color attach="background" args={[sun.skyColor]} />
-      <fog attach="fog" args={[sun.skyColor, 26, 65]} />
+      <ToneMappingSync exposure={exposure} />
+      <color attach="background" args={[bgColor]} />
+      <fog attach="fog" args={[bgColor, 30, 82]} />
 
-      {/* Illuminazione realistica: emisferica + direzionale solare con ombre morbide */}
+      {/* Cielo fisico procedurale in modalità Realistico e Serale */}
+      {preset !== 'studio' && renderSettings.cameraMode !== 'top' && (
+        <Sky
+          distance={450}
+          sunPosition={sun.position}
+          inclination={0}
+          azimuth={0.25}
+          turbidity={preset === 'evening' ? 10 : 4.2}
+          rayleigh={preset === 'evening' ? 3.2 : 1.1}
+          mieCoefficient={0.005}
+          mieDirectionalG={0.82}
+        />
+      )}
+
+      {/* Illuminazione architettonica multi-sorgente: emisferica + sole morbido + fill cielo opposto */}
       <hemisphereLight
-        args={['#f0f6ff', '#b5a898', sun.ambientIntensity + 0.35]}
+        args={[
+          preset === 'evening' ? '#93c5fd' : '#f4f8ff',
+          preset === 'evening' ? '#5c4b3b' : '#c8b9a6',
+          preset === 'evening'
+            ? 0.48
+            : preset === 'studio'
+              ? 0.95
+              : sun.ambientIntensity + 0.42,
+        ]}
       />
       <directionalLight
         position={sun.position}
-        intensity={sun.sunIntensity}
-        color={sun.sunColor}
+        intensity={mainSunIntensity}
+        color={preset === 'studio' ? '#fffcf7' : sun.sunColor}
         castShadow
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
         shadow-camera-near={1}
-        shadow-camera-far={45}
-        shadow-camera-left={-14}
-        shadow-camera-right={14}
-        shadow-camera-top={14}
-        shadow-camera-bottom={-14}
-        shadow-bias={-0.0004}
-        shadow-radius={3}
+        shadow-camera-far={55}
+        shadow-camera-left={-shadowHalf}
+        shadow-camera-right={shadowHalf}
+        shadow-camera-top={shadowHalf}
+        shadow-camera-bottom={-shadowHalf}
+        shadow-bias={-0.00018}
+        shadow-normalBias={0.025}
+        shadow-radius={3.5}
+      />
+      {/* Luce secondaria di schiarita (sky fill morbido opposto al sole) per volumi scolpiti */}
+      <directionalLight
+        position={[-sun.position[0] * 0.7, 9, -sun.position[2] * 0.7]}
+        intensity={preset === 'evening' ? 0.25 : 0.42}
+        color="#d8e8ff"
       />
 
-      {/* Environment map procedurale per riflessi naturali su vetri, metalli e ceramica */}
-      <SceneEnvironment />
+      {/* Luci interne calde automatiche al centro di ogni stanza */}
+      {roomLights.map((rl) => (
+        <group key={rl.id} position={[rl.x, rl.y, rl.z]}>
+          <pointLight
+            color={preset === 'evening' ? '#ffcf87' : '#fff2dc'}
+            intensity={roomLightIntensity}
+            distance={rl.radius}
+            decay={2}
+          />
+          {/* Plafoniera LED moderna visibile sul soffitto in prima persona */}
+          {showRoof && (
+            <mesh position={[0, 0.24, 0]}>
+              <cylinderGeometry args={[0.2, 0.2, 0.035, 24]} />
+              <meshStandardMaterial
+                color="#fffdf8"
+                emissive="#ffe7bd"
+                emissiveIntensity={preset === 'evening' ? 2.2 : 1.1}
+                roughness={0.2}
+              />
+            </mesh>
+          )}
+        </group>
+      ))}
+
+      {/* Environment map procedurale per riflessi naturali su vetri, metalli, marmo e ceramica */}
+      <SceneEnvironment preset={preset} />
+
+      {/* Ombre morbide di contatto a pavimento (Ambient Occlusion sotto mobili e lungo i battiscopa) */}
+      {visibleData.walls.length > 0 && (
+        <ContactShadows
+          key={contactKey}
+          position={[0, 0.003, 0]}
+          opacity={preset === 'evening' ? 0.5 : 0.42}
+          scale={Math.max(10, visibleData.sceneRadius * 2.4)}
+          blur={1.75}
+          far={2.6}
+          resolution={512}
+          frames={1}
+          color="#1e293b"
+        />
+      )}
 
       {/* Gruppo completo della casa o della singola stanza (esportato in .glb) */}
       <group
@@ -331,6 +477,7 @@ const SceneContent: React.FC<{
           floorColor={renderSettings.floorColor}
           wallColor={renderSettings.wallColor}
           showRoof={showRoof}
+          showBaseboards={showBaseboards}
           showDemolishedWalls={!activeRoom && Boolean(renderSettings.showDemolishedWalls3D)}
           centerX={visibleData.centerX}
           centerZ={visibleData.centerZ}
@@ -343,6 +490,8 @@ const SceneContent: React.FC<{
             item={item}
             centerX={visibleData.centerX}
             centerZ={visibleData.centerZ}
+            walls={visibleData.walls}
+            openings={visibleData.openings}
           />
         ))}
       </group>
@@ -434,11 +583,17 @@ export const Scene3D = forwardRef<Scene3DHandle>((_, ref) => {
       <Canvas
         shadows
         dpr={[1, 2]}
-        camera={{ fov: 46, near: 0.08, far: 120, position: [8, 9, 8] }}
-        gl={{ preserveDrawingBuffer: true, antialias: true }}
+        camera={{ fov: 44, near: 0.08, far: 160, position: [8, 9, 8] }}
+        gl={{
+          preserveDrawingBuffer: true,
+          antialias: true,
+          toneMapping: THREE.ACESFilmicToneMapping,
+          toneMappingExposure: 1.08,
+        }}
       >
         <SceneContent
           activeRoom={activeRoom}
+          detectedRooms={detectedRooms}
           exportGroupRef={exportGroupRef}
           onBindThree={handleBindThree}
         />

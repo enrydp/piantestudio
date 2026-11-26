@@ -21,38 +21,33 @@ import { useProjectStore } from '../store/useProjectStore';
 
 const GEMINI_KEY_STORAGE = 'piantestudio_gemini_api_key_v1';
 
-type PhotoStyle = 'modern_italian' | 'scandinavian' | 'warm_minimal' | 'industrial' | 'classic';
+type PhotoStyle = 'faithful_natural' | 'modern_italian' | 'bright_daylight' | 'warm_evening';
+type FidelityMode = 'strict' | 'enhanced';
 
 const PHOTO_STYLES: { id: PhotoStyle; label: string; promptDesc: string }[] = [
   {
+    id: 'faithful_natural',
+    label: 'Naturale Fedele',
+    promptDesc:
+      'clean natural architectural photography with accurate neutral colors, soft realistic global illumination, crisp material micro-textures, and authentic reflections',
+  },
+  {
     id: 'modern_italian',
-    label: 'Moderno Italiano',
+    label: 'Architettonico Caldo',
     promptDesc:
-      'contemporary Italian interior design photography, refined natural textures, subtle designer lighting, crisp architectural photography',
+      'high-end Italian architectural photography look, subtle warm daylight balance, realistic matte plaster, tactile wood and fabric surfaces, soft natural shadows',
   },
   {
-    id: 'scandinavian',
-    label: 'Scandinavo Luminoso',
+    id: 'bright_daylight',
+    label: 'Luminoso Da Catalogo',
     promptDesc:
-      'bright Scandinavian interior photography, airy natural daylight, soft textiles, pale oak accents, clean cozy atmosphere',
+      'bright airy real-estate architectural photography, crisp clean daylight, soft diffused shadows, ultra-clean realistic finishes',
   },
   {
-    id: 'warm_minimal',
-    label: 'Minimalista Caldo',
+    id: 'warm_evening',
+    label: 'Atmosfera Serale',
     promptDesc:
-      'warm minimalist architectural photography, travertine and linen accents, soft indirect lighting, serene luxury ambiance',
-  },
-  {
-    id: 'industrial',
-    label: 'Industriale Loft',
-    promptDesc:
-      'modern loft architectural photography, matte black metal details, warm wood and concrete contrast, editorial magazine lighting',
-  },
-  {
-    id: 'classic',
-    label: 'Classico Elegante',
-    promptDesc:
-      'elegant classic European interior photography, refined moldings, rich fabrics, balanced natural sunlight, Architectural Digest style',
+      'cozy golden-hour / warm evening architectural photography, soft warm ambient indoor bounce light, realistic specular highlights and gentle shadows',
   },
 ];
 
@@ -66,7 +61,8 @@ export const AiPhotoRenderModal: React.FC<AiPhotoRenderModalProps> = ({
   onClose,
 }) => {
   const { project, showToast } = useProjectStore();
-  const [styleId, setStyleId] = useState<PhotoStyle>('modern_italian');
+  const [styleId, setStyleId] = useState<PhotoStyle>('faithful_natural');
+  const [fidelityMode, setFidelityMode] = useState<FidelityMode>('strict');
   const [extraNotes, setExtraNotes] = useState('');
   const [apiKey, setApiKey] = useState(() => {
     try {
@@ -83,38 +79,69 @@ export const AiPhotoRenderModal: React.FC<AiPhotoRenderModalProps> = ({
   const floorColorHex = project.renderSettings.floorColor;
   const floorLabel =
     project.renderSettings.floorTexture === 'parquet'
-      ? `oak parquet wood flooring${floorColorHex ? ` (${floorColorHex})` : ''}`
+      ? `realistic oak wood parquet planks matching the exact tone in the image${floorColorHex ? ` (approx. ${floorColorHex})` : ''}`
       : project.renderSettings.floorTexture === 'piastrelle'
-        ? `matte porcelain stoneware floor tiles${floorColorHex ? ` (${floorColorHex})` : ''}`
-        : `smooth architectural micro-cement concrete flooring${floorColorHex ? ` (${floorColorHex})` : ''}`;
+        ? `realistic matte porcelain stoneware floor tiles with subtle grout lines matching the exact tone in the image${floorColorHex ? ` (approx. ${floorColorHex})` : ''}`
+        : `realistic smooth architectural micro-cement concrete flooring matching the exact tone in the image${floorColorHex ? ` (approx. ${floorColorHex})` : ''}`;
 
-  const furnitureSummary = useMemo(() => {
-    const names = Array.from(new Set(project.furniture.map((f) => f.name)));
-    return names.length > 0 ? names.join(', ') : 'minimal architectural room';
-  }, [project.furniture]);
+  const cameraModeDesc = useMemo(() => {
+    switch (project.renderSettings.cameraMode) {
+      case 'top':
+        return 'The input image is a strict top-down 90-degree orthographic floorplan view (with no ceiling). Preserve this exact top-down orthographic camera angle and open-top layout — do NOT tilt the camera or add a roof/ceiling.';
+      case 'dollhouse':
+        return 'The input image is an elevated 3D cutaway / dollhouse architectural view (with no roof/ceiling). Preserve this EXACT elevated cutaway angle, exposed wall tops, and open-top composition — do NOT convert it to an eye-level shot and do NOT add a ceiling.';
+      case 'orbit':
+        return 'The input image is an elevated 3D perspective architectural cutaway view (with no ceiling). Preserve the EXACT camera angle, perspective, open wall tops, and framing — do NOT change the viewpoint or add a ceiling.';
+      case 'first_person':
+      default:
+        return 'The input image is an eye-level interior view. Preserve the EXACT camera position, field of view, vanishing points, ceiling height, and framing.';
+    }
+  }, [project.renderSettings.cameraMode]);
 
   const timeDesc = useMemo(() => {
+    if (project.renderSettings.renderPreset === 'evening') {
+      return 'warm cozy evening lighting with realistic indoor light bounce';
+    }
     const h = project.renderSettings.timeOfDay;
-    if (h < 9.5) return 'soft golden morning sunlight';
-    if (h > 17) return 'warm golden-hour sunset light';
-    return 'bright natural midday daylight';
-  }, [project.renderSettings.timeOfDay]);
+    if (h < 9.5) return 'soft morning sunlight';
+    if (h > 17) return 'warm late-afternoon sunlight';
+    return 'natural balanced midday daylight';
+  }, [project.renderSettings.timeOfDay, project.renderSettings.renderPreset]);
 
   const builtPrompt = useMemo(() => {
     const style = PHOTO_STYLES.find((s) => s.id === styleId) ?? PHOTO_STYLES[0];
+    const strictRules =
+      fidelityMode === 'strict'
+        ? [
+            'TASK: Re-render the attached 3D architectural screenshot with photorealistic materials and lighting while keeping a 1:1 EXACT structural match.',
+            'CRITICAL GEOMETRY LOCK: Treat the input image as a strict pixel-aligned structural template. Keep EVERY wall, corner, door, window, upper/lower cabinet, appliance, and piece of furniture in its EXACT pixel position, exact size, exact count, exact orientation, and original color.',
+            'STRICT PROHIBITIONS: Do NOT add, invent, move, resize, rotate, duplicate, or remove ANY object. Do NOT add extra furniture, curtains, paintings, rugs, hanging lamps, decorative moldings, plants, people, or extra windows/doors that are not already present in the input image.',
+          ]
+        : [
+            'TASK: Re-render the attached 3D architectural screenshot into a photorealistic interior render while faithfully preserving the exact room layout, camera angle, walls, doors, windows, and main furniture positions.',
+            'Keep every existing wall, opening, and piece of furniture in the exact same position and proportion. You may subtly refine small realistic details (soft fabric folds, realistic handles, subtle reflections) without changing the layout or adding large objects.',
+          ];
+
     const parts = [
-      'Transform this 3D architectural model screenshot into an ultra-realistic interior photograph.',
-      'STRICTLY preserve the exact camera angle, wall geometry, room layout, door/window positions, and furniture placement from the input image.',
-      `Style: ${style.promptDesc}.`,
-      `Materials: ${floorLabel}, painted plaster walls (${project.renderSettings.wallColor}), realistic wood, fabric, glass reflections, natural global illumination, and ${timeDesc}.`,
-      `Visible elements: ${furnitureSummary}.`,
-      'Shot on full-frame DSLR 24mm tilt-shift architectural lens, photorealistic textures, soft shadows, no text, no watermarks.',
+      ...strictRules,
+      cameraModeDesc,
+      `Photographic finish: ${style.promptDesc}.`,
+      `Surface materials (upgrade realism only, preserve exact colors from input): ${floorLabel}; painted plaster walls (${project.renderSettings.wallColor}); physically realistic wood grain, woven fabrics, ceramic, brushed metal, and reflective window glass; ${timeDesc} with soft contact shadows and ambient occlusion.`,
+      'No text, no labels, no watermarks, no distorted geometry, no extra hallucinated objects.',
     ];
     if (extraNotes.trim()) {
-      parts.push(`Additional details: ${extraNotes.trim()}.`);
+      parts.push(`User requested details: ${extraNotes.trim()}.`);
     }
     return parts.join(' ');
-  }, [styleId, floorLabel, project.renderSettings.wallColor, timeDesc, furnitureSummary, extraNotes]);
+  }, [
+    styleId,
+    fidelityMode,
+    cameraModeDesc,
+    floorLabel,
+    project.renderSettings.wallColor,
+    timeDesc,
+    extraNotes,
+  ]);
 
   const handleSaveApiKey = (val: string) => {
     setApiKey(val);
@@ -197,18 +224,19 @@ export const AiPhotoRenderModal: React.FC<AiPhotoRenderModalProps> = ({
               contents: [
                 {
                   parts: [
-                    { text: builtPrompt },
                     {
                       inlineData: {
                         mimeType: 'image/png',
                         data: base64Data,
                       },
                     },
+                    { text: builtPrompt },
                   ],
                 },
               ],
               generationConfig: {
                 responseModalities: ['TEXT', 'IMAGE'],
+                temperature: fidelityMode === 'strict' ? 0.2 : 0.45,
               },
             }),
           }
@@ -433,11 +461,56 @@ export const AiPhotoRenderModal: React.FC<AiPhotoRenderModalProps> = ({
             </div>
           </div>
 
-          {/* Stile fotografico & dettagli */}
+          {/* Stile fotografico & fedeltà al rendering */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
-            <div className="space-y-2">
+            <div className="space-y-2.5">
+              {/* Controllo Fedeltà al Rendering 3D */}
+              <div className="space-y-1.5">
+                <span className="text-xs font-semibold text-slate-700 dark:text-slate-200 block">
+                  Fedeltà al Rendering 3D
+                </span>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setFidelityMode('strict')}
+                    className={`p-2 rounded-xl text-left border transition-colors cursor-pointer ${
+                      fidelityMode === 'strict'
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                        : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100'
+                    }`}
+                  >
+                    <div className="text-[11px] font-bold">Ricalco Esatto 1:1</div>
+                    <div
+                      className={`text-[10px] leading-tight mt-0.5 ${
+                        fidelityMode === 'strict' ? 'text-emerald-100' : 'text-slate-400'
+                      }`}
+                    >
+                      Solo materiali/luci reali, non inventa mobili
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFidelityMode('enhanced')}
+                    className={`p-2 rounded-xl text-left border transition-colors cursor-pointer ${
+                      fidelityMode === 'enhanced'
+                        ? 'bg-violet-600 text-white border-violet-600 shadow-xs'
+                        : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100'
+                    }`}
+                  >
+                    <div className="text-[11px] font-bold">Rifinito</div>
+                    <div
+                      className={`text-[10px] leading-tight mt-0.5 ${
+                        fidelityMode === 'enhanced' ? 'text-violet-100' : 'text-slate-400'
+                      }`}
+                    >
+                      Mantiene il layout e rifinisce i dettagli
+                    </div>
+                  </button>
+                </div>
+              </div>
+
               <span className="text-xs font-semibold text-slate-700 dark:text-slate-200 block">
-                Stile d’arredo e fotografia
+                Resa fotografica e luce
               </span>
               <div className="flex flex-wrap gap-1.5">
                 {PHOTO_STYLES.map((s) => (
@@ -456,15 +529,15 @@ export const AiPhotoRenderModal: React.FC<AiPhotoRenderModalProps> = ({
                 ))}
               </div>
 
-              <label className="block space-y-1 pt-1">
+              <label className="block space-y-1 pt-0.5">
                 <span className="text-[11px] text-slate-500">
-                  Dettagli aggiuntivi opzionali (es. tende, tappeto, piante, luce)
+                  Dettagli extra opzionali (lascia vuoto per massima fedeltà al 3D)
                 </span>
                 <input
                   type="text"
                   value={extraNotes}
                   onChange={(e) => setExtraNotes(e.target.value)}
-                  placeholder="es. tende bianche leggere, tappeto chiaro, lampada di design..."
+                  placeholder="es. luce naturale più morbida, legno più caldo..."
                   className="w-full px-3 py-1.5 rounded-lg text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
                 />
               </label>

@@ -145,12 +145,15 @@ export type FurnitureGeometryType =
   | 'washing_machine'
   | 'boiler'
   | 'boiler_pellet'
+  | 'water_heater'
   | 'heat_pump_monobloc'
   | 'heat_pump_split'
   | 'ac_split_high'
   | 'ac_split_low'
   | 'radiator'
   | 'towel_warmer'
+  | 'manifold_water'
+  | 'manifold_heating'
   | 'plant'
   | 'stairs_straight'
   | 'stairs_l'
@@ -214,6 +217,7 @@ export interface Furniture {
 
 export type FloorTextureType = 'parquet' | 'piastrelle' | 'cemento';
 export type CameraMode3D = 'orbit' | 'top' | 'dollhouse' | 'first_person';
+export type RenderStylePreset = 'realistic' | 'studio' | 'evening';
 
 /** Impostazioni di rendering 3D (Step 3) */
 export interface RenderSettings {
@@ -231,6 +235,12 @@ export interface RenderSettings {
   showGrid3D: boolean;
   /** Mostra sagoma traslucida dei muri abbattuti in 3D (confronto prima/dopo) */
   showDemolishedWalls3D?: boolean;
+  /** Preset grafico/atmosferico del rendering 3D */
+  renderPreset?: RenderStylePreset;
+  /** Luci interne calde automatiche nelle stanze */
+  interiorLights?: boolean;
+  /** Battiscopa architettonico lungo le pareti */
+  showBaseboards?: boolean;
 }
 
 /** Strumenti attivi nell'editor 2D */

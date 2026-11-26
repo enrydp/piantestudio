@@ -274,6 +274,20 @@ const FurniturePlanDetail: React.FC<{
     );
   }
 
+  if (t === 'water_heater') {
+    const r = Math.min(hw, hd) * 0.72;
+    return (
+      <>
+        {/* Serbatoio cilindrico bollitore ACS */}
+        <Circle x={0} y={0} radius={r} stroke="#0284c7" strokeWidth={1.4} fill="rgba(241,245,249,0.75)" />
+        <Circle x={0} y={0} radius={r * 0.48} stroke="#ef4444" strokeWidth={1.3} fill="rgba(239,68,68,0.12)" />
+        {/* Attacchi acqua fredda (blu) e calda (rosso) */}
+        <Circle x={-r * 0.45} y={r * 0.55} radius={3.2} fill="#0284c7" />
+        <Circle x={r * 0.45} y={r * 0.55} radius={3.2} fill="#ef4444" />
+      </>
+    );
+  }
+
   if (t === 'heat_pump_monobloc' || t === 'heat_pump_split') {
     const isMono = t === 'heat_pump_monobloc';
     const accent = isMono ? '#0284c7' : '#0891b2';
@@ -346,6 +360,36 @@ const FurniturePlanDetail: React.FC<{
           );
         })}
         <Line points={[-hw + 3, 0, hw - 3, 0]} stroke={stroke} strokeWidth={1} opacity={0.5} />
+      </>
+    );
+  }
+
+  if (t === 'manifold_water' || t === 'manifold_heating') {
+    const isHeat = t === 'manifold_heating';
+    const ports = isHeat ? 6 : 5;
+    return (
+      <>
+        {/* Barre collettore mandata/calda (rosso) e ritorno/fredda (blu) */}
+        <Line
+          points={[-hw + 5, -hd * 0.35, hw - 5, -hd * 0.35]}
+          stroke={isHeat ? '#dc2626' : '#ef4444'}
+          strokeWidth={2.4}
+        />
+        <Line
+          points={[-hw + 5, hd * 0.35, hw - 5, hd * 0.35]}
+          stroke={isHeat ? '#2563eb' : '#0284c7'}
+          strokeWidth={2.4}
+        />
+        {/* Valvoline / vie del collettore */}
+        {Array.from({ length: ports }).map((_, idx) => {
+          const px = -hw + 7 + (idx / Math.max(1, ports - 1)) * (w - 14);
+          return (
+            <React.Fragment key={idx}>
+              <Circle x={px} y={-hd * 0.35} radius={2.2} fill={isHeat ? '#b91c1c' : '#dc2626'} />
+              <Circle x={px} y={hd * 0.35} radius={2.2} fill={isHeat ? '#1d4ed8' : '#0369a1'} />
+            </React.Fragment>
+          );
+        })}
       </>
     );
   }
@@ -710,7 +754,10 @@ export const FurnitureLayer: React.FC<FurnitureLayerProps> = ({
         const conflictReason = conflicts[item.id];
         const hasConflict = Boolean(conflictReason);
         const isLShaped = L_SHAPED_TYPES.has(item.geometryType);
-        const isRound = item.geometryType === 'plant' || item.geometryType === 'dining_table_round';
+        const isRound =
+          item.geometryType === 'plant' ||
+          item.geometryType === 'dining_table_round' ||
+          item.geometryType === 'water_heater';
         const isRug = item.geometryType === 'rug';
 
         const lShapePts = isLShaped

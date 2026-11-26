@@ -28,12 +28,14 @@ export interface MepConfig {
   panelPosition: Point2D;
   includeInduction: boolean;
   includeAcLine: boolean;
-  // Idraulico
+  // Idraulico (Collettore Acqua Sanitaria)
   pipeMaterial: PipeMaterial;
-  manifoldPosition: Point2D;
+  waterManifoldPosition: Point2D;
   includeHotWater: boolean;
   includeDrains: boolean;
-  // Riscaldamento & Climatizzazione (PdC Monoblocco / Splittata, Caldaia Gas / Pellet, Split, Termosifoni)
+  // Riscaldamento & Climatizzazione (Collettore Riscaldamento + Dorsale Primaria da PdC/Caldaia)
+  heatingManifoldPosition: Point2D;
+  primaryPipeDiameterMm: 26 | 32;
   hvacGeneratorOverride: HvacGeneratorOverride;
   splitFluidMode: SplitFluidMode;
   // Pittura / Vernice
@@ -146,6 +148,8 @@ export interface MepEstimate {
     coldBranchMeters: number;
     hotBranchMeters: number;
     mainSupplyMeters: number;
+    /** Dorsale primaria ACS/acqua Ø20/26 mm tra Generatore (Caldaia/PdC) e Collettore Acqua */
+    generatorToWaterManifoldMeters: number;
     totalSupplyMeters: number;
     drain40_50Meters: number;
     drain110Meters: number;
@@ -163,10 +167,17 @@ export interface MepEstimate {
     hasSplitGas: boolean;
     hasBoilerGas: boolean;
     hasBoilerPellet: boolean;
-    /** Tubo riscaldamento / idronico (mandata + ritorno) in multistrato coibentato / PEX / PPR / rame */
+    /** Diramazioni dal Collettore Riscaldamento ai termosifoni / split idronici (mandata + ritorno Ø16 mm) */
     heatingWaterPipeMeters: number;
     heatingWaterPipeLabel: string;
-    /** Dorsale primaria coibentata Ø26 mm per Pompa di calore Monoblocco (mandata + ritorno) */
+    /** Dorsale primaria di diametro maggiorato (Ø26/32 mm, mandata + ritorno) da Generatore (PdC / Caldaia) a Collettore Riscaldamento */
+    primaryTrunkPipeMeters: number;
+    primaryTrunkDiameterMm: 26 | 32;
+    primaryTrunkDistanceM: number;
+    primaryGeneratorAnchor: HvacGeneratorItem | null;
+    /** Numero vie necessarie sul Collettore Riscaldamento */
+    heatingManifoldWays: number;
+    /** Compatibilità: dorsale primaria PdC Monoblocco */
     monoblocPrimaryPipeMeters: number;
     /** Coppia tubi in rame frigorifero coibentato (Ø 1/4" + Ø 3/8") per PdC Splittata / Split a gas */
     refrigerantCopperPairMeters: number;
@@ -198,16 +209,22 @@ export interface MepEstimate {
   };
 }
 
-/** Stima posizione iniziale sensata per Quadro Elettrico (vicino porta d'ingresso) e Collettore Idrico (vicino bagno/cucina) */
+/** Stima posizione iniziale sensata per Quadro Elettrico (⚡), Collettore Acqua (💧) e Collettore Riscaldamento (🔥) */
 export function getDefaultServicePoints(
   project: ProjectData,
   rooms: DetectedRoom[]
-): { panelPosition: Point2D; manifoldPosition: Point2D } {
+): {
+  panelPosition: Point2D;
+  waterManifoldPosition: Point2D;
+  heatingManifoldPosition: Point2D;
+  placedWaterManifoldId: string | null;
+  placedHeatingManifoldId: string | null;
+} {
   const activeWalls = project.walls.filter((w) => !w.demolished);
   const bounds = getWallsBounds(activeWalls);
   const wallMap = new Map(activeWalls.map((w) => [w.id, w]));
 
-  // Quadro elettrico: vicino alla porta d'ingresso se presente, altrimenti angolo in basso a sinistra
+  // 1. Quadro elettrico: vicino alla porta d'ingresso se presente, altrimenti angolo in basso a sinistra
   let panelPosition: Point2D = {
     x: Number((bounds.minX + 0.5).toFixed(2)),
     y: Number((bounds.maxY - 0.5).toFixed(2)),
@@ -221,43 +238,109 @@ export function getDefaultServicePoints(
     }
   } else if (rooms.length > 0) {
     panelPosition = {
-      x: Number((rooms[0].bounds.minX + 0.3).toFixed(2)),
-      y: Number((rooms[0].bounds.maxY - 0.3).toFixed(2)),
+      x: Number((rooms[0].bounds.minX + 0.35).toFixed(2)),
+      y: Number((rooms[0].bounds.maxY - 0.35).toFixed(2)),
     };
   }
 
-  // Collettore / Caldaia: se è presente una caldaia (gas/pellet) o PdC monoblocco usa la sua posizione, altrimenti cucina o baricentro punti acqua
+  // 2. Collettore Acqua (Sanitario): se posizionato in pianta usa le sue coordinate reali
+  const placedWater = project.furniture.find((f) => isWaterManifold(f)) ?? null;
+  const placedHeating = project.furniture.find((f) => isHeatingManifold(f)) ?? null;
+
   const boilerItem = project.furniture.find(
     (f) =>
       f.geometryType === 'boiler' ||
       f.geometryType === 'boiler_pellet' ||
-      f.geometryType === 'heat_pump_monobloc'
+      f.geometryType === 'heat_pump_monobloc' ||
+      f.geometryType === 'heat_pump_split'
   );
   const waterFixtures = project.furniture.filter((f) => isWaterFixture(f));
-  let manifoldPosition: Point2D = {
-    x: Number((bounds.maxX - 0.6).toFixed(2)),
-    y: Number((bounds.minY + 0.6).toFixed(2)),
+  const hvacTerminals = project.furniture.filter((f) => isHvacTerminal(f));
+
+  let waterManifoldPosition: Point2D = {
+    x: Number((bounds.maxX - 0.7).toFixed(2)),
+    y: Number((bounds.minY + 0.7).toFixed(2)),
   };
-  if (boilerItem) {
-    manifoldPosition = { x: Number(boilerItem.x.toFixed(2)), y: Number(boilerItem.y.toFixed(2)) };
+
+  if (placedWater) {
+    waterManifoldPosition = {
+      x: Number(placedWater.x.toFixed(2)),
+      y: Number(placedWater.y.toFixed(2)),
+    };
   } else if (waterFixtures.length > 0) {
-    const kitchen = waterFixtures.find(
-      (f) =>
-        f.geometryType === 'kitchen_linear' ||
-        f.geometryType === 'kitchen_l' ||
-        f.geometryType === 'kitchen_peninsula' ||
-        f.geometryType === 'kitchen_island'
-    );
-    if (kitchen) {
-      manifoldPosition = { x: Number(kitchen.x.toFixed(2)), y: Number(kitchen.y.toFixed(2)) };
+    const bathRoom = rooms.find((r) => r.kind === 'bagno');
+    if (bathRoom) {
+      waterManifoldPosition = {
+        x: Number((bathRoom.bounds.minX + 0.35).toFixed(2)),
+        y: Number((bathRoom.bounds.centerY).toFixed(2)),
+      };
     } else {
       const avgX = waterFixtures.reduce((s, f) => s + f.x, 0) / waterFixtures.length;
       const avgY = waterFixtures.reduce((s, f) => s + f.y, 0) / waterFixtures.length;
-      manifoldPosition = { x: Number(avgX.toFixed(2)), y: Number(avgY.toFixed(2)) };
+      waterManifoldPosition = { x: Number(avgX.toFixed(2)), y: Number(avgY.toFixed(2)) };
+    }
+  } else if (boilerItem) {
+    waterManifoldPosition = {
+      x: Number((boilerItem.x + 0.5).toFixed(2)),
+      y: Number((boilerItem.y + 0.4).toFixed(2)),
+    };
+  }
+
+  // 3. Collettore Riscaldamento (Termico): se posizionato in pianta usa le sue coordinate reali,
+  // altrimenti zona baricentrica/disimpegno tra generatore e termosifoni (distanziato dal collettore acqua)
+  let heatingManifoldPosition: Point2D = {
+    x: Number((bounds.centerX).toFixed(2)),
+    y: Number((bounds.centerY).toFixed(2)),
+  };
+
+  if (placedHeating) {
+    heatingManifoldPosition = {
+      x: Number(placedHeating.x.toFixed(2)),
+      y: Number(placedHeating.y.toFixed(2)),
+    };
+  } else if (hvacTerminals.length > 0) {
+    const avgX = hvacTerminals.reduce((s, f) => s + f.x, 0) / hvacTerminals.length;
+    const avgY = hvacTerminals.reduce((s, f) => s + f.y, 0) / hvacTerminals.length;
+    heatingManifoldPosition = { x: Number(avgX.toFixed(2)), y: Number(avgY.toFixed(2)) };
+  } else {
+    const hallway = rooms.find((r) => r.kind === 'generica' && r.areaSqm < 12);
+    if (hallway) {
+      heatingManifoldPosition = {
+        x: Number(hallway.bounds.centerX.toFixed(2)),
+        y: Number(hallway.bounds.centerY.toFixed(2)),
+      };
     }
   }
 
-  return { panelPosition, manifoldPosition };
+  // Evita sovrapposizione visiva tra Collettore Acqua e Collettore Riscaldamento se nessuno dei due è fisso
+  if (
+    !placedHeating &&
+    Math.hypot(
+      heatingManifoldPosition.x - waterManifoldPosition.x,
+      heatingManifoldPosition.y - waterManifoldPosition.y
+    ) < 0.75
+  ) {
+    heatingManifoldPosition = {
+      x: Number((waterManifoldPosition.x + 0.85).toFixed(2)),
+      y: Number((waterManifoldPosition.y + 0.35).toFixed(2)),
+    };
+  }
+
+  return {
+    panelPosition,
+    waterManifoldPosition,
+    heatingManifoldPosition,
+    placedWaterManifoldId: placedWater?.id ?? null,
+    placedHeatingManifoldId: placedHeating?.id ?? null,
+  };
+}
+
+export function isWaterManifold(f: Furniture): boolean {
+  return f.geometryType === 'manifold_water';
+}
+
+export function isHeatingManifold(f: Furniture): boolean {
+  return f.geometryType === 'manifold_heating';
 }
 
 export function isWaterFixture(f: Furniture): boolean {
@@ -432,7 +515,7 @@ export function estimateMepAndPaint(
       dedicatedOutlets += countType('fridge');
     }
     dedicatedOutlets += countType('washing_machine');
-    dedicatedOutlets += countType('boiler') + countType('boiler_pellet');
+    dedicatedOutlets += countType('boiler') + countType('boiler_pellet') + countType('water_heater');
     dedicatedOutlets += countType('heat_pump_monobloc') + countType('heat_pump_split');
     const placedSplitsInRoom = countType('ac_split_high') + countType('ac_split_low');
     if (placedSplitsInRoom > 0) {
@@ -510,7 +593,10 @@ export function estimateMepAndPaint(
     (f) => f.geometryType === 'heat_pump_monobloc' || f.geometryType === 'heat_pump_split'
   );
   const placedBoilers = project.furniture.filter(
-    (f) => f.geometryType === 'boiler' || f.geometryType === 'boiler_pellet'
+    (f) =>
+      f.geometryType === 'boiler' ||
+      f.geometryType === 'boiler_pellet' ||
+      f.geometryType === 'water_heater'
   );
   for (const hp of placedHeatPumps) {
     const dist = Math.max(2.5, manhattan(config.panelPosition, { x: hp.x, y: hp.y })) + 2.5;
@@ -613,8 +699,8 @@ export function estimateMepAndPaint(
           ? 50
           : 40;
 
-    // Distanza reale Manhattan dal collettore/caldaia all'utenza + salita/discesa a muro
-    const horizDist = Math.max(0.8, manhattan(config.manifoldPosition, { x: f.x, y: f.y }));
+    // Distanza reale Manhattan dal Collettore Acqua all'utenza + salita/discesa a muro
+    const horizDist = Math.max(0.8, manhattan(config.waterManifoldPosition, { x: f.x, y: f.y }));
     const verticalRun = f.geometryType === 'shower' ? 2.6 : 1.8;
     const coldPipeM = Number(((horizDist + verticalRun) * wasteMult).toFixed(1));
     const hotPipeM = needsHot ? Number(((horizDist + verticalRun) * wasteMult).toFixed(1)) : 0;
@@ -642,13 +728,35 @@ export function estimateMepAndPaint(
 
   const coldBranchMeters = Math.ceil(fixtures.reduce((s, fx) => s + fx.coldPipeM, 0));
   const hotBranchMeters = Math.ceil(fixtures.reduce((s, fx) => s + fx.hotPipeM, 0));
-  // Dorsale principale Ø20 mm (ingresso acqua → caldaia/collettore)
+
+  // Generatore sanitario (priorità al Boiler acqua calda ACS se inserito, altrimenti caldaia / PdC)
+  const placedWaterHeater = project.furniture.find((f) => f.geometryType === 'water_heater') ?? null;
+  const allGeneratorsForSanitary = project.furniture.filter((f) => isHvacGenerator(f));
+  const sanitaryGenerator =
+    placedWaterHeater ??
+    allGeneratorsForSanitary.find((g) => g.geometryType === 'boiler') ??
+    allGeneratorsForSanitary.find((g) => g.geometryType === 'heat_pump_monobloc') ??
+    allGeneratorsForSanitary.find((g) => g.geometryType === 'boiler_pellet') ??
+    allGeneratorsForSanitary.find((g) => g.geometryType === 'heat_pump_split') ??
+    null;
+
+  // Dorsale primaria ACS + ingresso fredda Ø20/26 mm (Generatore ↔ Collettore Acqua)
+  const generatorToWaterManifoldMeters =
+    sanitaryGenerator && fixtures.length > 0
+      ? Math.ceil(
+          (Math.max(1.5, manhattan(sanitaryGenerator, config.waterManifoldPosition)) + 1.8) *
+            (config.includeHotWater ? 2 : 1) *
+            wasteMult
+        )
+      : 0;
+
+  // Dorsale principale ingresso acqua Ø20/26 mm (contatore/ingresso → Collettore Acqua + eventuale tratta generatore)
   const mainSupplyMeters =
     fixtures.length > 0
       ? Math.ceil(
-          (Math.max(3, manhattan(config.panelPosition, config.manifoldPosition) * 0.85) + 2) *
+          (Math.max(3, manhattan(config.panelPosition, config.waterManifoldPosition) * 0.85) + 2) *
             wasteMult
-        )
+        ) + generatorToWaterManifoldMeters
       : 0;
   const totalSupplyMeters = coldBranchMeters + hotBranchMeters + mainSupplyMeters;
 
@@ -735,15 +843,20 @@ export function estimateMepAndPaint(
   const splitOutdoorAnchor: Point2D =
     generators.find((g) => g.kind === 'hp_split') ??
     generators.find((g) => g.kind === 'hp_monobloc') ??
-    config.manifoldPosition;
+    config.heatingManifoldPosition;
 
-  const waterHeatingAnchor: Point2D =
+  // Generatore termico principale per la DORSALE PRIMARIA (tubi più grandi Ø26/32 mm → Collettore Riscaldamento)
+  const primaryGeneratorAnchor: HvacGeneratorItem | null =
     generators.find((g) => g.kind === 'hp_monobloc') ??
     generators.find((g) => g.kind === 'boiler_gas') ??
     generators.find((g) => g.kind === 'boiler_pellet') ??
-    config.manifoldPosition;
+    generators.find((g) => g.kind === 'hp_split') ??
+    null;
 
-  const heatingWaterPipeLabel = `${PIPE_MATERIAL_LABELS[config.pipeMaterial].label} coibentato Ø16/20 mm`;
+  // I terminali ad acqua (termosifoni, scaldasalviette, split idronici) partono SEMPRE dal Collettore Riscaldamento!
+  const waterHeatingAnchor: Point2D = config.heatingManifoldPosition;
+
+  const heatingWaterPipeLabel = `${PIPE_MATERIAL_LABELS[config.pipeMaterial].label} coibentato Ø16 mm`;
 
   const hvacTerminals: HvacTerminalItem[] = [];
   let heatingWaterRaw = 0;
@@ -766,7 +879,7 @@ export function estimateMepAndPaint(
     const horizDist = Math.max(1.2, manhattan(anchor, { x: f.x, y: f.y }));
 
     if (circuitType === 'water') {
-      // Andata + Ritorno (× 2) + salite verticali
+      // Andata + Ritorno (× 2) dal Collettore Riscaldamento + salite verticali
       const verticalPerLine = kind === 'ac_split_high' ? 2.5 : kind === 'towel_warmer' ? 1.5 : 1.0;
       const twoWayMeters = Number(((horizDist + verticalPerLine) * 2 * wasteMult).toFixed(1));
       const condMeters = isRadiator ? 0 : Number(((2.8 + horizDist * 0.35) * wasteMult).toFixed(1));
@@ -783,7 +896,7 @@ export function estimateMepAndPaint(
         y: f.y,
         distanceM: Number(horizDist.toFixed(1)),
         circuitType: 'water',
-        pipeDescription: `${heatingWaterPipeLabel} (A+R)`,
+        pipeDescription: `${heatingWaterPipeLabel} (A+R da collettore)`,
         pipeMeters: twoWayMeters,
         condensateMeters: condMeters,
       });
@@ -812,15 +925,21 @@ export function estimateMepAndPaint(
     }
   }
 
-  // Dorsale primaria coibentata Ø26 mm (mandata + ritorno) per Pompa di calore Monoblocco
-  const monoblocGen = generators.find((g) => g.kind === 'hp_monobloc');
-  const monoblocPrimaryPipeMeters = hasMonoblocWater
-    ? Math.ceil(
-        (Math.max(3.5, monoblocGen ? manhattan(monoblocGen, config.manifoldPosition) : 4.5) + 1.5) *
-          2 *
-          wasteMult
-      )
+  const heatingManifoldWays = hvacTerminals.filter((t) => t.circuitType === 'water').length;
+  const hasHydronicSystem =
+    heatingManifoldWays > 0 || hasMonoblocWater || hasBoilerGas || hasBoilerPellet;
+
+  // Dorsale primaria di diametro maggiorato (Ø26 o Ø32 mm coibentato, mandata + ritorno × 2)
+  // collega la Pompa di Calore / Caldaia al Collettore Riscaldamento!
+  const primaryTrunkDistanceM = primaryGeneratorAnchor
+    ? Number(Math.max(1.5, manhattan(primaryGeneratorAnchor, config.heatingManifoldPosition)).toFixed(1))
+    : hasHydronicSystem
+      ? 4.0
+      : 0;
+  const primaryTrunkPipeMeters = hasHydronicSystem
+    ? Math.ceil((primaryTrunkDistanceM + 1.8) * 2 * wasteMult)
     : 0;
+  const monoblocPrimaryPipeMeters = primaryTrunkPipeMeters;
 
   // Se l'utente ha selezionato PdC Splittata (gas) senza ancora posizionare gli split, stima una tratta minima verso unità interna
   if (hasSplitGas && refrigerantPairRaw === 0) {
@@ -835,7 +954,7 @@ export function estimateMepAndPaint(
     ? Math.ceil(
         (Math.max(
           4,
-          manhattan(config.panelPosition, gasBoilerGen ?? config.manifoldPosition) * 0.9
+          manhattan(config.panelPosition, gasBoilerGen ?? config.heatingManifoldPosition) * 0.9
         ) +
           2) *
           wasteMult
@@ -928,6 +1047,7 @@ export function estimateMepAndPaint(
       coldBranchMeters,
       hotBranchMeters,
       mainSupplyMeters,
+      generatorToWaterManifoldMeters,
       totalSupplyMeters,
       drain40_50Meters,
       drain110Meters,
@@ -947,6 +1067,11 @@ export function estimateMepAndPaint(
       hasBoilerPellet,
       heatingWaterPipeMeters: Math.ceil(heatingWaterRaw),
       heatingWaterPipeLabel,
+      primaryTrunkPipeMeters,
+      primaryTrunkDiameterMm: config.primaryPipeDiameterMm,
+      primaryTrunkDistanceM,
+      primaryGeneratorAnchor,
+      heatingManifoldWays,
       monoblocPrimaryPipeMeters,
       refrigerantCopperPairMeters: Math.ceil(refrigerantPairRaw),
       condensateDrainMeters: Math.ceil(condensateRaw),
@@ -1012,8 +1137,9 @@ export function buildMepCsv(estimate: MepEstimate, projectName: string): string 
     ['Voce', 'Tipo tubo / Dettaglio', 'Quantità', 'Unità'],
     ['Generatore attivo', estimate.hvac.activeGeneratorSummary, String(estimate.hvac.generators.length), 'n.'],
     ['Terminali rilevati (split / termosifoni)', `Split a ${estimate.hvac.splitFluid === 'water' ? 'circolazione acqua' : 'gas refrigerante'}`, String(estimate.hvac.terminals.length), 'n.'],
-    ['Tubo riscaldamento / idronico (A+R)', estimate.hvac.heatingWaterPipeLabel, String(estimate.hvac.heatingWaterPipeMeters), 'm'],
-    ['Dorsale primaria PdC Monoblocco (A+R)', 'Multistrato / Rame coibentato Ø 26 mm', String(estimate.hvac.monoblocPrimaryPipeMeters), 'm'],
+    ['Dorsale primaria Generatore → Collettore Riscaldamento (A+R)', `Tubo maggiorato coibentato Ø ${estimate.hvac.primaryTrunkDiameterMm} mm`, String(estimate.hvac.primaryTrunkPipeMeters), 'm'],
+    ['Diramazioni Collettore Riscaldamento → Terminali (A+R)', estimate.hvac.heatingWaterPipeLabel, String(estimate.hvac.heatingWaterPipeMeters), 'm'],
+    ['Collettore Riscaldamento (vie richieste)', 'Mandata + Ritorno con flussimetri', String(estimate.hvac.heatingManifoldWays), 'vie'],
     ['Tubo rame frigorifero coibentato (coppia)', 'Linea liquido Ø 1/4" + gas Ø 3/8" (PdC Splittata / Split)', String(estimate.hvac.refrigerantCopperPairMeters), 'm'],
     ['Tubo scarico condensa Ø 20 mm', 'Per split a parete / fan-coil', String(estimate.hvac.condensateDrainMeters), 'm'],
     ['Cavo comunicazione 4G1,5 mm²', 'Collegamento unità esterna ↔ split', String(estimate.hvac.commCable4g15Meters), 'm'],

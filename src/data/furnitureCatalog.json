@@ -306,6 +306,15 @@
     "tipoGeometria": "boiler_pellet"
   },
   {
+    "id": "water-heater",
+    "nome": "Boiler acqua calda (Bollitore ACS)",
+    "categoria": "Impianti",
+    "dimensioni": { "width": 55, "depth": 55, "height": 150 },
+    "coloreDefault": "#f1f5f9",
+    "materialeDefault": "metal",
+    "tipoGeometria": "water_heater"
+  },
+  {
     "id": "heat-pump-monobloc",
     "nome": "Pompa di calore Monoblocco (acqua)",
     "categoria": "Impianti",
@@ -358,6 +367,24 @@
     "coloreDefault": "#f8fafc",
     "materialeDefault": "metal",
     "tipoGeometria": "towel_warmer"
+  },
+  {
+    "id": "manifold-water",
+    "nome": "Collettore Acqua (Sanitario)",
+    "categoria": "Impianti",
+    "dimensioni": { "width": 45, "depth": 16, "height": 55 },
+    "coloreDefault": "#e0f2fe",
+    "materialeDefault": "metal",
+    "tipoGeometria": "manifold_water"
+  },
+  {
+    "id": "manifold-heating",
+    "nome": "Collettore Riscaldamento (Termico)",
+    "categoria": "Impianti",
+    "dimensioni": { "width": 60, "depth": 16, "height": 55 },
+    "coloreDefault": "#fee2e2",
+    "materialeDefault": "metal",
+    "tipoGeometria": "manifold_heating"
   },
   {
     "id": "plant",

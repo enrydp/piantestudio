@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import type { FloorTextureType, Opening, Wall } from '../types/project';
 import { buildWallGeometryWithCSG } from '../utils/csg';
 import { getWallsBounds, wallAngleRad, wallLength } from '../utils/geometry';
-import { getFloorTexture } from '../utils/proceduralTextures';
+import { getFloorPbrTextures, getWallPlasterTextures } from '../utils/proceduralTextures';
 import type { FloorStrip } from '../utils/rooms';
 
 interface RoomMesh3DProps {
@@ -20,6 +20,7 @@ interface RoomMesh3DProps {
   floorColor?: string;
   wallColor: string;
   showRoof: boolean;
+  showBaseboards?: boolean;
   showDemolishedWalls?: boolean;
   centerX?: number;
   centerZ?: number;
@@ -28,14 +29,42 @@ interface RoomMesh3DProps {
 
 const EMPTY_OPENINGS: Opening[] = [];
 
-/** Singolo muro con fori CSG e relativi infissi (memoizzato: non viene toccato al cambio texture pavimento) */
+/** Calcola i segmenti liberi lungo un muro (escludendo porte/portefinestre/archi a filo pavimento) per il battiscopa */
+function computeBaseboardSegments(len: number, openings: Opening[]): Array<[number, number]> {
+  const gaps: Array<[number, number]> = [];
+  for (const op of openings) {
+    if (op.sillHeight > 0.14) continue; // Finestre alte non interrompono il battiscopa
+    const halfW = Math.min(op.width, len) / 2 + 0.03;
+    const center = op.position * len;
+    const a = Math.max(0, center - halfW);
+    const b = Math.min(len, center + halfW);
+    if (b > a) gaps.push([a, b]);
+  }
+  gaps.sort((x, y) => x[0] - y[0]);
+
+  const segments: Array<[number, number]> = [];
+  let cursor = 0;
+  for (const [ga, gb] of gaps) {
+    if (ga - cursor > 0.08) {
+      segments.push([cursor, ga]);
+    }
+    cursor = Math.max(cursor, gb);
+  }
+  if (len - cursor > 0.08) {
+    segments.push([cursor, len]);
+  }
+  return segments;
+}
+
+/** Singolo muro con fori CSG, intonaco PBR, battiscopa e infissi realistici */
 const WallWithOpenings3D: React.FC<{
   wall: Wall;
   openings: Opening[];
   wallColor: string;
+  showBaseboards: boolean;
   centerX: number;
   centerZ: number;
-}> = React.memo(({ wall, openings, wallColor, centerX, centerZ }) => {
+}> = React.memo(({ wall, openings, wallColor, showBaseboards, centerX, centerZ }) => {
   const len = wallLength(wall);
   const angle = wallAngleRad(wall);
   const midX = (wall.start.x + wall.end.x) / 2 - centerX;
@@ -47,18 +76,64 @@ const WallWithOpenings3D: React.FC<{
     [wall, openings]
   );
 
+  const plasterMaps = useMemo(
+    () => getWallPlasterTextures(Math.max(1, len / 2.2), Math.max(1, wall.height / 2.2)),
+    [len, wall.height]
+  );
+
+  const baseboardSegments = useMemo(
+    () => (showBaseboards ? computeBaseboardSegments(len, openings) : []),
+    [showBaseboards, len, openings]
+  );
+
   useEffect(() => {
     return () => {
       geometry.dispose();
     };
   }, [geometry]);
 
+  useEffect(() => {
+    return () => {
+      plasterMaps.bumpMap.dispose();
+      plasterMaps.roughnessMap?.dispose();
+    };
+  }, [plasterMaps]);
+
   return (
     <group position={[midX, 0, midZ]} rotation={[0, -angle, 0]}>
-      {/* Muro con fori CSG */}
+      {/* Muro intonacato PBR con fori CSG */}
       <mesh geometry={geometry} castShadow receiveShadow>
-        <meshStandardMaterial color={wallColor} roughness={0.86} metalness={0.02} />
+        <meshStandardMaterial
+          color={wallColor}
+          bumpMap={plasterMaps.bumpMap}
+          bumpScale={0.0055}
+          roughnessMap={plasterMaps.roughnessMap ?? null}
+          roughness={0.94}
+          metalness={0.01}
+          envMapIntensity={0.65}
+        />
       </mesh>
+
+      {/* Battiscopa architettonico (su entrambi i lati del muro, interrotto solo in corrispondenza delle porte) */}
+      {baseboardSegments.map(([segA, segB], idx) => {
+        const segLen = segB - segA;
+        const localX = (segA + segB) / 2 - len / 2;
+        const bbH = 0.088;
+        const bbT = 0.015;
+        const zOff = wall.thickness / 2 + bbT / 2;
+        return (
+          <React.Fragment key={`bb_${idx}`}>
+            <mesh position={[localX, bbH / 2, zOff]} castShadow receiveShadow>
+              <boxGeometry args={[segLen, bbH, bbT]} />
+              <meshStandardMaterial color="#f6f4ef" roughness={0.44} metalness={0.03} />
+            </mesh>
+            <mesh position={[localX, bbH / 2, -zOff]} castShadow receiveShadow>
+              <boxGeometry args={[segLen, bbH, bbT]} />
+              <meshStandardMaterial color="#f6f4ef" roughness={0.44} metalness={0.03} />
+            </mesh>
+          </React.Fragment>
+        );
+      })}
 
       {/* Infissi per ciascuna apertura */}
       {openings.map((op) => {
@@ -267,17 +342,29 @@ const WallWithOpenings3D: React.FC<{
                 </mesh>
               )}
 
-              {/* Vetro trasparente */}
+              {/* Vetro trasparente fisico con riflessi realistici */}
               <mesh position={[0, clampedH / 2, 0]}>
                 <boxGeometry args={[innerW, innerH, 0.014]} />
                 <meshPhysicalMaterial
-                  color="#cfe9f7"
+                  color="#d9eef9"
                   transparent
-                  opacity={0.34}
-                  roughness={0.08}
-                  metalness={0.1}
-                  reflectivity={0.85}
+                  opacity={0.3}
+                  roughness={0.04}
+                  metalness={0.08}
+                  clearcoat={1}
+                  clearcoatRoughness={0.04}
+                  ior={1.5}
+                  reflectivity={0.95}
+                  envMapIntensity={1.5}
                 />
+              </mesh>
+              {/* Maniglia finestra cromata */}
+              <mesh
+                position={[hasCenterMullion ? 0.03 : clampedW / 2 - 0.05, clampedH * 0.45, wall.thickness * 0.34]}
+                castShadow
+              >
+                <boxGeometry args={[0.018, 0.11, 0.03]} />
+                <meshStandardMaterial color="#d4dae2" metalness={0.92} roughness={0.16} />
               </mesh>
             </group>
           );
@@ -291,7 +378,7 @@ const WallWithOpenings3D: React.FC<{
 
 WallWithOpenings3D.displayName = 'WallWithOpenings3D';
 
-/** Soletta pavimento isolata dai muri così il cambio texture/colore agisce esclusivamente sul pavimento */
+/** Soletta pavimento PBR isolata dai muri così il cambio texture/colore agisce esclusivamente sul pavimento */
 const FloorSlab3D: React.FC<{
   floorW: number;
   floorD: number;
@@ -301,24 +388,33 @@ const FloorSlab3D: React.FC<{
   centerZ: number;
   floorStrips?: FloorStrip[];
 }> = React.memo(({ floorW, floorD, floorTexture, floorColor, centerX, centerZ, floorStrips }) => {
-  const floorTex = useMemo(
-    () => getFloorTexture(floorTexture, floorW / 1.8, floorD / 1.8, floorColor),
+  const floorPbr = useMemo(
+    () => getFloorPbrTextures(floorTexture, floorW / 1.85, floorD / 1.85, floorColor),
     [floorTexture, floorW, floorD, floorColor]
   );
 
   useEffect(() => {
     return () => {
-      floorTex.dispose();
+      floorPbr.map.dispose();
+      floorPbr.bumpMap.dispose();
+      floorPbr.roughnessMap.dispose();
     };
-  }, [floorTex]);
+  }, [floorPbr]);
+
+  const bumpScale =
+    floorTexture === 'parquet' ? 0.014 : floorTexture === 'piastrelle' ? 0.013 : 0.008;
 
   const material = (
     <meshStandardMaterial
-      key={floorTexture}
+      key={`${floorTexture}_${floorColor ?? ''}`}
       color="#ffffff"
-      map={floorTex}
-      roughness={floorTexture === 'piastrelle' ? 0.45 : floorTexture === 'parquet' ? 0.6 : 0.78}
-      metalness={0.03}
+      map={floorPbr.map}
+      bumpMap={floorPbr.bumpMap}
+      bumpScale={bumpScale}
+      roughnessMap={floorPbr.roughnessMap}
+      roughness={1}
+      metalness={floorTexture === 'piastrelle' ? 0.04 : 0.02}
+      envMapIntensity={floorTexture === 'piastrelle' ? 1.15 : 0.9}
     />
   );
 
@@ -344,10 +440,17 @@ const FloorSlab3D: React.FC<{
   }
 
   return (
-    <mesh position={[0, -0.02, 0]} receiveShadow>
-      <boxGeometry args={[floorW, 0.04, floorD]} />
-      {material}
-    </mesh>
+    <group>
+      <mesh position={[0, -0.02, 0]} receiveShadow>
+        <boxGeometry args={[floorW, 0.04, floorD]} />
+        {material}
+      </mesh>
+      {/* Basamento architettonico elegante sotto la soletta */}
+      <mesh position={[0, -0.075, 0]} receiveShadow>
+        <boxGeometry args={[floorW + 0.14, 0.07, floorD + 0.14]} />
+        <meshStandardMaterial color="#3b4252" roughness={0.85} metalness={0.05} />
+      </mesh>
+    </group>
   );
 });
 
@@ -360,6 +463,7 @@ export const RoomMesh3D: React.FC<RoomMesh3DProps> = ({
   floorColor,
   wallColor,
   showRoof,
+  showBaseboards = true,
   showDemolishedWalls = false,
   centerX,
   centerZ,
@@ -391,10 +495,10 @@ export const RoomMesh3D: React.FC<RoomMesh3DProps> = ({
 
   return (
     <group name="Casa_Struttura">
-      {/* Piano terreno esterno di contesto */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.04, 0]} receiveShadow>
-        <planeGeometry args={[80, 80]} />
-        <meshStandardMaterial color="#c6d0db" roughness={0.95} />
+      {/* Piano terreno esterno di contesto (travertino/sabbia architettonico caldo) */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.115, 0]} receiveShadow>
+        <planeGeometry args={[120, 120]} />
+        <meshStandardMaterial color="#d8d4cb" roughness={0.95} metalness={0} />
       </mesh>
 
       {/* Soletta pavimento dell'abitazione o della singola stanza */}
@@ -408,13 +512,14 @@ export const RoomMesh3D: React.FC<RoomMesh3DProps> = ({
         floorStrips={floorStrips}
       />
 
-      {/* Muri attivi con fori CSG (i muri abbattuti sono rimossi) */}
+      {/* Muri attivi con fori CSG e battiscopa */}
       {activeWalls.map((wall) => (
         <WallWithOpenings3D
           key={wall.id}
           wall={wall}
           openings={openingsByWall.get(wall.id) ?? EMPTY_OPENINGS}
           wallColor={wallColor}
+          showBaseboards={showBaseboards}
           centerX={effectiveCenterX}
           centerZ={effectiveCenterZ}
         />

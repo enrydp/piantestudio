@@ -5,26 +5,178 @@
 import React, { Suspense, useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { useGLTF } from '@react-three/drei';
-import type { Furniture, FurnitureMaterial } from '../types/project';
-import { getMarbleTexture } from '../utils/proceduralTextures';
+import type { Furniture, FurnitureMaterial, Opening, Wall } from '../types/project';
+import { getOpeningCenter, wallLength } from '../utils/geometry';
+import { getFurnitureMaterialMaps } from '../utils/proceduralTextures';
 
-function materialProps(mat: FurnitureMaterial): { roughness: number; metalness: number } {
+const EMPTY_WALLS: Wall[] = [];
+const EMPTY_OPENINGS: Opening[] = [];
+
+/** Ritaglia un segmento 2D (a = asse pensile, p = asse perpendicolare) sulla fascia [pMin, pMax] */
+function clipSegmentToBand(
+  a1: number,
+  p1: number,
+  a2: number,
+  p2: number,
+  pMin: number,
+  pMax: number
+): [number, number] | null {
+  const dp = p2 - p1;
+  let t0 = 0;
+  let t1 = 1;
+  if (Math.abs(dp) < 1e-6) {
+    if (p1 < pMin || p1 > pMax) return null;
+  } else {
+    let ta = (pMin - p1) / dp;
+    let tb = (pMax - p1) / dp;
+    if (ta > tb) [ta, tb] = [tb, ta];
+    t0 = Math.max(t0, ta);
+    t1 = Math.min(t1, tb);
+    if (t0 > t1) return null;
+  }
+  const ca = a1 + t0 * (a2 - a1);
+  const cb = a1 + t1 * (a2 - a1);
+  return [Math.min(ca, cb), Math.max(ca, cb)];
+}
+
+/**
+ * Calcola i tratti validi dei pensili cucina [start, end] lungo un asse locale ('x' o 'z'),
+ * interrompendoli automaticamente vicino a finestre, portefinestre, porte o archi
+ * anche quando le basi inferiori della cucina proseguono sotto la finestra.
+ */
+function computeKitchenWallUnitSegments(
+  item: Furniture,
+  walls: Wall[],
+  openings: Opening[],
+  axis: 'x' | 'z',
+  runStart: number,
+  runEnd: number,
+  backCoord: number,
+  outwardSign: -1 | 1,
+  cabMinY: number,
+  cabMaxY: number
+): Array<[number, number]> {
+  if (openings.length === 0 || walls.length === 0) {
+    return [[runStart, runEnd]];
+  }
+
+  const wallMap = new Map(walls.filter((w) => !w.demolished).map((w) => [w.id, w]));
+  const theta = (item.rotation * Math.PI) / 180;
+  const cosT = Math.cos(theta);
+  const sinT = Math.sin(theta);
+
+  const toLocal = (wx: number, wy: number): { lx: number; lz: number } => {
+    const dx = wx - item.x;
+    const dy = wy - item.y;
+    return {
+      lx: dx * cosT + dy * sinT,
+      lz: -dx * sinT + dy * cosT,
+    };
+  };
+
+  const blocked: Array<[number, number]> = [];
+  const windowClearance = 0.1; // 10 cm di luce libera vicino allo stipite della finestra
+
+  for (const op of openings) {
+    const wall = wallMap.get(op.wallId);
+    if (!wall) continue;
+
+    // Verifica sovrapposizione in altezza con i pensili (es. [1.46m .. 2.18m])
+    const opBottom = op.sillHeight;
+    const opTop = op.sillHeight + op.height;
+    if (opTop <= cabMinY - 0.04 || opBottom >= cabMaxY + 0.04) continue;
+
+    const len = wallLength(wall);
+    if (len < 0.05) continue;
+
+    const ux = (wall.end.x - wall.start.x) / len;
+    const uy = (wall.end.y - wall.start.y) / len;
+    const center = getOpeningCenter(op, wall);
+    const halfW = op.width / 2 + windowClearance;
+
+    const pA = toLocal(center.x - ux * halfW, center.y - uy * halfW);
+    const pB = toLocal(center.x + ux * halfW, center.y + uy * halfW);
+
+    const a1 = axis === 'x' ? pA.lx : pA.lz;
+    const p1 = axis === 'x' ? pA.lz : pA.lx;
+    const a2 = axis === 'x' ? pB.lx : pB.lz;
+    const p2 = axis === 'x' ? pB.lz : pB.lx;
+
+    // Fascia di prossimità rispetto al retro del pensile (copre spessore muro + leggero distacco + profondità pensile 34 cm)
+    const bandMin =
+      outwardSign === -1
+        ? backCoord - wall.thickness / 2 - 0.45
+        : backCoord - 0.38;
+    const bandMax =
+      outwardSign === -1
+        ? backCoord + 0.38
+        : backCoord + wall.thickness / 2 + 0.45;
+
+    const hit = clipSegmentToBand(a1, p1, a2, p2, bandMin, bandMax);
+    if (!hit) continue;
+
+    // Se l'apertura è su un muro perpendicolare vicino al fianco del pensile, aggiungi il semispessore muro
+    const isPerpendicular = Math.abs(p2 - p1) > Math.abs(a2 - a1) * 1.4;
+    const extraPad = isPerpendicular ? wall.thickness / 2 + windowClearance : 0;
+    const ga = Math.max(runStart, hit[0] - extraPad);
+    const gb = Math.min(runEnd, hit[1] + extraPad);
+    if (gb > ga) {
+      blocked.push([ga, gb]);
+    }
+  }
+
+  if (blocked.length === 0) {
+    return [[runStart, runEnd]];
+  }
+
+  // Unisci intervalli bloccati sovrapposti
+  blocked.sort((u, v) => u[0] - v[0]);
+  const merged: Array<[number, number]> = [];
+  for (const [ga, gb] of blocked) {
+    if (merged.length === 0 || ga > merged[merged.length - 1][1]) {
+      merged.push([ga, gb]);
+    } else {
+      merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], gb);
+    }
+  }
+
+  // Sottrai le finestre dal tratto completo del pensile e scarta ritagli troppo stretti (< 24 cm)
+  const segments: Array<[number, number]> = [];
+  let cursor = runStart;
+  for (const [ga, gb] of merged) {
+    if (ga - cursor >= 0.24) {
+      segments.push([cursor, ga]);
+    }
+    cursor = Math.max(cursor, gb);
+  }
+  if (runEnd - cursor >= 0.24) {
+    segments.push([cursor, runEnd]);
+  }
+  return segments;
+}
+
+function materialProps(mat: FurnitureMaterial): {
+  roughness: number;
+  metalness: number;
+  bumpScale: number;
+  envMapIntensity: number;
+} {
   switch (mat) {
     case 'wood':
-      return { roughness: 0.62, metalness: 0.04 };
+      return { roughness: 0.52, metalness: 0.04, bumpScale: 0.008, envMapIntensity: 0.85 };
     case 'marble':
-      return { roughness: 0.14, metalness: 0.06 };
+      return { roughness: 0.14, metalness: 0.05, bumpScale: 0.003, envMapIntensity: 1.25 };
     case 'fabric':
-      return { roughness: 0.92, metalness: 0.0 };
+      return { roughness: 0.92, metalness: 0.0, bumpScale: 0.012, envMapIntensity: 0.45 };
     case 'leather':
-      return { roughness: 0.48, metalness: 0.05 };
+      return { roughness: 0.42, metalness: 0.06, bumpScale: 0.006, envMapIntensity: 0.95 };
     case 'metal':
-      return { roughness: 0.28, metalness: 0.78 };
+      return { roughness: 0.22, metalness: 0.84, bumpScale: 0.004, envMapIntensity: 1.3 };
     case 'ceramic':
-      return { roughness: 0.16, metalness: 0.08 };
+      return { roughness: 0.14, metalness: 0.06, bumpScale: 0.002, envMapIntensity: 1.25 };
     case 'matte':
     default:
-      return { roughness: 0.75, metalness: 0.02 };
+      return { roughness: 0.72, metalness: 0.02, bumpScale: 0.004, envMapIntensity: 0.65 };
   }
 }
 
@@ -62,34 +214,63 @@ const CustomGlbModel: React.FC<{
 };
 
 /** Geometria procedurale dettagliata per ciascun tipo di mobile */
-const ProceduralFurniture: React.FC<{ item: Furniture }> = ({ item }) => {
+const ProceduralFurniture: React.FC<{
+  item: Furniture;
+  walls: Wall[];
+  openings: Opening[];
+}> = ({ item, walls, openings }) => {
   const { width: w, depth: d, height: h, color, material, geometryType } = item;
   const mp = materialProps(material);
 
-  const marbleTex = useMemo(
-    () => (material === 'marble' ? getMarbleTexture(color) : null),
+  const pbrMaps = useMemo(
+    () => getFurnitureMaterialMaps(material, color),
     [material, color]
   );
 
   useEffect(() => {
     return () => {
-      marbleTex?.dispose();
+      pbrMaps?.map?.dispose();
+      pbrMaps?.bumpMap?.dispose();
     };
-  }, [marbleTex]);
+  }, [pbrMaps]);
 
-  const mainMat = marbleTex ? (
-    <meshStandardMaterial
-      key={`marble_${color}`}
-      color="#ffffff"
-      map={marbleTex}
-      roughness={mp.roughness}
-      metalness={mp.metalness}
-    />
-  ) : (
-    <meshStandardMaterial color={color} roughness={mp.roughness} metalness={mp.metalness} />
+  const mainMat =
+    material === 'marble' || material === 'ceramic' ? (
+      <meshPhysicalMaterial
+        key={`phys_${material}_${color}`}
+        color={pbrMaps?.map ? '#ffffff' : color}
+        map={pbrMaps?.map ?? null}
+        roughness={mp.roughness}
+        metalness={mp.metalness}
+        clearcoat={material === 'marble' ? 0.68 : 0.75}
+        clearcoatRoughness={0.1}
+        envMapIntensity={mp.envMapIntensity}
+      />
+    ) : pbrMaps ? (
+      <meshStandardMaterial
+        key={`pbr_${material}_${color}`}
+        color={pbrMaps.map ? '#ffffff' : color}
+        map={pbrMaps.map ?? null}
+        bumpMap={pbrMaps.bumpMap ?? null}
+        bumpScale={mp.bumpScale}
+        roughness={mp.roughness}
+        metalness={mp.metalness}
+        envMapIntensity={mp.envMapIntensity}
+      />
+    ) : (
+      <meshStandardMaterial
+        color={color}
+        roughness={mp.roughness}
+        metalness={mp.metalness}
+        envMapIntensity={mp.envMapIntensity}
+      />
+    );
+  const legMat = (
+    <meshStandardMaterial color="#3c2f25" roughness={0.55} metalness={0.18} envMapIntensity={0.85} />
   );
-  const legMat = <meshStandardMaterial color="#3c2f25" roughness={0.6} metalness={0.15} />;
-  const chromeMat = <meshStandardMaterial color="#cfd6de" roughness={0.22} metalness={0.85} />;
+  const chromeMat = (
+    <meshStandardMaterial color="#e2e8f0" roughness={0.14} metalness={0.94} envMapIntensity={1.45} />
+  );
 
   switch (geometryType) {
     case 'sofa_l': {
@@ -255,6 +436,40 @@ const ProceduralFurniture: React.FC<{ item: Furniture }> = ({ item }) => {
       const sideCenterX = mx * (-w / 2 + sideW / 2);
       const worktopMat = <meshStandardMaterial color="#474c52" roughness={0.35} metalness={0.1} />;
 
+      const cabY = h + 0.92;
+      const cabH = 0.72;
+      const cabD = 0.34;
+      const cabMinY = cabY - cabH / 2;
+      const cabMaxY = cabY + cabH / 2;
+
+      const mainUpperSegments = computeKitchenWallUnitSegments(
+        item,
+        walls,
+        openings,
+        'x',
+        -w / 2,
+        w / 2,
+        -d / 2,
+        -1,
+        cabMinY,
+        cabMaxY
+      );
+      const sideUpperSegments =
+        geometryType === 'kitchen_l'
+          ? computeKitchenWallUnitSegments(
+              item,
+              walls,
+              openings,
+              'z',
+              -d / 2 + cabD,
+              d / 2,
+              mx * (-w / 2),
+              mx === 1 ? -1 : 1,
+              cabMinY,
+              cabMaxY
+            )
+          : [];
+
       return (
         <group>
           {/* Base lunga superiore (-Z) */}
@@ -303,22 +518,30 @@ const ProceduralFurniture: React.FC<{ item: Furniture }> = ({ item }) => {
             <meshStandardMaterial color="#181b20" roughness={0.2} metalness={0.5} />
           </mesh>
 
-          {/* Pensili superiori lungo il lato principale */}
-          <mesh position={[0, h + 0.92, -d / 2 + 0.18]} castShadow receiveShadow>
-            <boxGeometry args={[w, 0.72, 0.34]} />
-            {mainMat}
-          </mesh>
-          {/* Pensili laterali solo per cucina ad angolo (non su penisola aperta) */}
-          {geometryType === 'kitchen_l' && (
+          {/* Pensili superiori lungo il lato principale (si fermano automaticamente vicino alle finestre) */}
+          {mainUpperSegments.map(([sx, ex], idx) => (
             <mesh
-              position={[mx * (-w / 2 + 0.18), h + 0.92, -d / 2 + topD + sideLen / 2]}
+              key={`kl_u_main_${idx}`}
+              position={[(sx + ex) / 2, cabY, -d / 2 + cabD / 2 + 0.01]}
               castShadow
               receiveShadow
             >
-              <boxGeometry args={[0.34, 0.72, sideLen]} />
+              <boxGeometry args={[ex - sx, cabH, cabD]} />
               {mainMat}
             </mesh>
-          )}
+          ))}
+          {/* Pensili laterali solo per cucina ad angolo (interrotti automaticamente vicino alle finestre) */}
+          {sideUpperSegments.map(([sz, ez], idx) => (
+            <mesh
+              key={`kl_u_side_${idx}`}
+              position={[mx * (-w / 2 + cabD / 2 + 0.01), cabY, (sz + ez) / 2]}
+              castShadow
+              receiveShadow
+            >
+              <boxGeometry args={[cabD, cabH, ez - sz]} />
+              {mainMat}
+            </mesh>
+          ))}
         </group>
       );
     }
@@ -538,6 +761,55 @@ const ProceduralFurniture: React.FC<{ item: Furniture }> = ({ item }) => {
       );
     }
 
+    case 'water_heater': {
+      const radius = Math.min(w, d) / 2;
+      const baseFootH = 0.06;
+      const tankH = Math.max(0.5, h - baseFootH - 0.08);
+      return (
+        <group>
+          {/* Basamento nero antivibrante */}
+          <mesh position={[0, baseFootH / 2, 0]} castShadow receiveShadow>
+            <cylinderGeometry args={[radius * 0.96, radius, baseFootH, 24]} />
+            <meshStandardMaterial color="#1e293b" roughness={0.65} metalness={0.25} />
+          </mesh>
+          {/* Serbatoio cilindrico coibentato */}
+          <mesh position={[0, baseFootH + tankH / 2, 0]} castShadow receiveShadow>
+            <cylinderGeometry args={[radius, radius, tankH, 28]} />
+            {mainMat}
+          </mesh>
+          {/* Calotta superiore stondata */}
+          <mesh
+            position={[0, baseFootH + tankH, 0]}
+            scale={[1, 0.28, 1]}
+            castShadow
+            receiveShadow
+          >
+            <sphereGeometry args={[radius, 24, 14, 0, Math.PI * 2, 0, Math.PI / 2]} />
+            <meshStandardMaterial color="#cbd5e1" roughness={0.35} metalness={0.45} />
+          </mesh>
+          {/* Pannello display temperatura frontale */}
+          <mesh position={[0, baseFootH + tankH * 0.72, radius + 0.006]}>
+            <boxGeometry args={[Math.min(0.18, radius * 0.7), 0.09, 0.014]} />
+            <meshStandardMaterial color="#0f172a" roughness={0.25} metalness={0.3} />
+          </mesh>
+          {/* LED display arancio/rosso ACS */}
+          <mesh position={[0, baseFootH + tankH * 0.72, radius + 0.015]}>
+            <boxGeometry args={[0.08, 0.025, 0.004]} />
+            <meshStandardMaterial color="#f97316" emissive="#f97316" emissiveIntensity={0.9} />
+          </mesh>
+          {/* Attacchi tubi ACS superiore/frontale: Fredda (blu) e Calda (rosso) */}
+          <mesh position={[-radius * 0.32, baseFootH + tankH + 0.1, 0]} castShadow>
+            <cylinderGeometry args={[0.016, 0.016, 0.16, 12]} />
+            <meshStandardMaterial color="#0284c7" roughness={0.3} metalness={0.6} />
+          </mesh>
+          <mesh position={[radius * 0.32, baseFootH + tankH + 0.1, 0]} castShadow>
+            <cylinderGeometry args={[0.016, 0.016, 0.16, 12]} />
+            <meshStandardMaterial color="#dc2626" roughness={0.3} metalness={0.6} />
+          </mesh>
+        </group>
+      );
+    }
+
     case 'heat_pump_monobloc':
     case 'heat_pump_split': {
       const isMono = geometryType === 'heat_pump_monobloc';
@@ -679,6 +951,53 @@ const ProceduralFurniture: React.FC<{ item: Furniture }> = ({ item }) => {
                 <cylinderGeometry args={[0.011, 0.011, w - 0.06, 8]} />
                 {mainMat}
               </mesh>
+            );
+          })}
+        </group>
+      );
+    }
+
+    case 'manifold_water':
+    case 'manifold_heating': {
+      const isHeat = geometryType === 'manifold_heating';
+      const mountY = 0.45;
+      const ports = isHeat ? 6 : 5;
+      return (
+        <group position={[0, mountY, 0]}>
+          {/* Cassetta da incasso / sportello collettore */}
+          <mesh position={[0, h / 2, 0]} castShadow receiveShadow>
+            <boxGeometry args={[w, h, d]} />
+            <meshStandardMaterial color="#f1f5f9" roughness={0.4} metalness={0.35} />
+          </mesh>
+          {/* Cornice sportello */}
+          <mesh position={[0, h / 2, d / 2 + 0.005]}>
+            <boxGeometry args={[w * 0.92, h * 0.88, 0.012]} />
+            <meshStandardMaterial color={isHeat ? '#fef2f2' : '#f0f9ff'} roughness={0.5} metalness={0.1} />
+          </mesh>
+          {/* Barra superiore (Mandata / Calda - rossa) */}
+          <mesh position={[0, h * 0.68, d / 2 + 0.018]} rotation={[0, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.016, 0.016, w * 0.78, 12]} />
+            <meshStandardMaterial color={isHeat ? '#dc2626' : '#ef4444'} roughness={0.3} metalness={0.6} />
+          </mesh>
+          {/* Barra inferiore (Ritorno / Fredda - blu) */}
+          <mesh position={[0, h * 0.34, d / 2 + 0.018]} rotation={[0, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.016, 0.016, w * 0.78, 12]} />
+            <meshStandardMaterial color={isHeat ? '#2563eb' : '#0284c7'} roughness={0.3} metalness={0.6} />
+          </mesh>
+          {/* Valvoline / attacchi vie */}
+          {Array.from({ length: ports }).map((_, idx) => {
+            const px = -w * 0.34 + (idx / Math.max(1, ports - 1)) * (w * 0.68);
+            return (
+              <group key={idx}>
+                <mesh position={[px, h * 0.68, d / 2 + 0.032]} rotation={[Math.PI / 2, 0, 0]}>
+                  <cylinderGeometry args={[0.012, 0.012, 0.02, 8]} />
+                  <meshStandardMaterial color="#b91c1c" roughness={0.35} />
+                </mesh>
+                <mesh position={[px, h * 0.34, d / 2 + 0.032]} rotation={[Math.PI / 2, 0, 0]}>
+                  <cylinderGeometry args={[0.012, 0.012, 0.02, 8]} />
+                  <meshStandardMaterial color="#0369a1" roughness={0.35} />
+                </mesh>
+              </group>
             );
           })}
         </group>
@@ -868,6 +1187,24 @@ const ProceduralFurniture: React.FC<{ item: Furniture }> = ({ item }) => {
     case 'kitchen_island': {
       const topT = 0.045;
       const bodyH = h - topT;
+      const cabY = h + 0.92;
+      const cabH = 0.72;
+      const cabD = 0.34;
+      const linearUpperSegments =
+        geometryType === 'kitchen_linear'
+          ? computeKitchenWallUnitSegments(
+              item,
+              walls,
+              openings,
+              'x',
+              -w / 2,
+              w / 2,
+              -d / 2,
+              -1,
+              cabY - cabH / 2,
+              cabY + cabH / 2
+            )
+          : [];
       return (
         <group>
           {/* Basi */}
@@ -895,11 +1232,18 @@ const ProceduralFurniture: React.FC<{ item: Furniture }> = ({ item }) => {
                 <boxGeometry args={[Math.min(0.62, w * 0.24), 0.012, d * 0.72]} />
                 <meshStandardMaterial color="#181b20" roughness={0.2} metalness={0.5} />
               </mesh>
-              {/* Pensili superiori */}
-              <mesh position={[0, h + 0.92, -d / 2 + 0.18]} castShadow receiveShadow>
-                <boxGeometry args={[w, 0.72, 0.34]} />
-                {mainMat}
-              </mesh>
+              {/* Pensili superiori: si fermano automaticamente vicino alle finestre anche se le basi continuano sotto */}
+              {linearUpperSegments.map(([sx, ex], idx) => (
+                <mesh
+                  key={`klin_u_${idx}`}
+                  position={[(sx + ex) / 2, cabY, -d / 2 + cabD / 2 + 0.01]}
+                  castShadow
+                  receiveShadow
+                >
+                  <boxGeometry args={[ex - sx, cabH, cabD]} />
+                  {mainMat}
+                </mesh>
+              ))}
             </>
           )}
         </group>
@@ -1299,7 +1643,9 @@ export const FurnitureMesh3D: React.FC<{
   item: Furniture;
   centerX: number;
   centerZ: number;
-}> = ({ item, centerX, centerZ }) => {
+  walls?: Wall[];
+  openings?: Opening[];
+}> = ({ item, centerX, centerZ, walls = EMPTY_WALLS, openings = EMPTY_OPENINGS }) => {
   const rotY = (-item.rotation * Math.PI) / 180;
 
   return (
@@ -1309,7 +1655,7 @@ export const FurnitureMesh3D: React.FC<{
       rotation={[0, rotY, 0]}
     >
       {item.customGlbUrl ? (
-        <Suspense fallback={<ProceduralFurniture item={item} />}>
+        <Suspense fallback={<ProceduralFurniture item={item} walls={walls} openings={openings} />}>
           <CustomGlbModel
             url={item.customGlbUrl}
             width={item.width}
@@ -1318,7 +1664,7 @@ export const FurnitureMesh3D: React.FC<{
           />
         </Suspense>
       ) : (
-        <ProceduralFurniture item={item} />
+        <ProceduralFurniture item={item} walls={walls} openings={openings} />
       )}
     </group>
   );

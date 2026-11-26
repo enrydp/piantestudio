@@ -18,25 +18,22 @@ import {
   ExternalLink,
   KeyRound,
   Loader2,
-  MapPin,
   Paintbrush,
   Printer,
   Sparkles,
   Thermometer,
   Zap,
 } from 'lucide-react';
+import rawCatalog from '../data/furnitureCatalog.json';
 import { useProjectStore } from '../store/useProjectStore';
+import type { FurnitureCatalogItem, Point2D } from '../types/project';
 import { detectRooms } from '../utils/rooms';
-import { getWallsBounds } from '../utils/geometry';
 import {
   PAINT_TYPE_PRESETS,
   PIPE_MATERIAL_LABELS,
   buildMepCsv,
   estimateMepAndPaint,
   getDefaultServicePoints,
-  isHvacGenerator,
-  isHvacTerminal,
-  isWaterFixture,
   type CeiLevel,
   type HvacGeneratorOverride,
   type MepConfig,
@@ -45,6 +42,9 @@ import {
   type SplitFluidMode,
   type WallSidesMode,
 } from '../utils/mepEstimator';
+import { MepBlueprintCanvas } from './MepBlueprintCanvas';
+
+const CATALOG = rawCatalog as FurnitureCatalogItem[];
 
 const GEMINI_KEY_STORAGE = 'piantestudio_gemini_api_key_v1';
 
@@ -59,7 +59,13 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
   activeTab,
   onChangeTab,
 }) => {
-  const { project, showToast } = useProjectStore();
+  const {
+    project,
+    addFurnitureFromCatalog,
+    updateFurniture,
+    deleteFurnitureIds,
+    showToast,
+  } = useProjectStore();
 
   const rooms = useMemo(
     () => detectRooms(project.walls, project.furniture),
@@ -77,9 +83,11 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
     includeInduction: true,
     includeAcLine: true,
     pipeMaterial: 'multistrato',
-    manifoldPosition: defaults.manifoldPosition,
+    waterManifoldPosition: defaults.waterManifoldPosition,
     includeHotWater: true,
     includeDrains: true,
+    heatingManifoldPosition: defaults.heatingManifoldPosition,
+    primaryPipeDiameterMm: 26,
     hvacGeneratorOverride: 'auto',
     splitFluidMode: 'auto',
     paintType: 'lavabile',
@@ -94,17 +102,35 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
   }));
 
   const [hasCustomPanel, setHasCustomPanel] = useState(false);
-  const [hasCustomManifold, setHasCustomManifold] = useState(false);
-  const [placingPoint, setPlacingPoint] = useState<'panel' | 'manifold' | null>(null);
+  const [hasCustomWaterManifold, setHasCustomWaterManifold] = useState(false);
+  const [hasCustomHeatingManifold, setHasCustomHeatingManifold] = useState(false);
+  const [waterManifoldRemoved, setWaterManifoldRemoved] = useState(false);
+  const [heatingManifoldRemoved, setHeatingManifoldRemoved] = useState(false);
 
-  // Mantieni sincronizzati i punti di default finché l'utente non li sposta manualmente sulla mini-pianta
+  // Se l'utente inserisce un collettore nello Step 2, riattivalo automaticamente anche in Step 4
+  useEffect(() => {
+    if (defaults.placedWaterManifoldId) setWaterManifoldRemoved(false);
+  }, [defaults.placedWaterManifoldId]);
+
+  useEffect(() => {
+    if (defaults.placedHeatingManifoldId) setHeatingManifoldRemoved(false);
+  }, [defaults.placedHeatingManifoldId]);
+
+  // Mantieni sincronizzati i punti con i collettori reali posizionati in pianta (o default finché non spostati)
   useEffect(() => {
     setConfig((prev) => ({
       ...prev,
       panelPosition: hasCustomPanel ? prev.panelPosition : defaults.panelPosition,
-      manifoldPosition: hasCustomManifold ? prev.manifoldPosition : defaults.manifoldPosition,
+      waterManifoldPosition:
+        defaults.placedWaterManifoldId || !hasCustomWaterManifold
+          ? defaults.waterManifoldPosition
+          : prev.waterManifoldPosition,
+      heatingManifoldPosition:
+        defaults.placedHeatingManifoldId || !hasCustomHeatingManifold
+          ? defaults.heatingManifoldPosition
+          : prev.heatingManifoldPosition,
     }));
-  }, [defaults, hasCustomPanel, hasCustomManifold]);
+  }, [defaults, hasCustomPanel, hasCustomWaterManifold, hasCustomHeatingManifold]);
 
   const estimate = useMemo(
     () => estimateMepAndPaint(project, rooms, config),
@@ -380,40 +406,79 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
     }
   };
 
-  // Geometria per la mini-pianta SVG interattiva
   const activeWalls = useMemo(
     () => project.walls.filter((w) => !w.demolished),
     [project.walls]
   );
-  const planBounds = useMemo(() => {
-    const b = getWallsBounds(activeWalls);
-    const pad = 0.6;
-    return {
-      minX: b.minX - pad,
-      minY: b.minY - pad,
-      width: Math.max(2, b.width + pad * 2),
-      height: Math.max(2, b.height + pad * 2),
-    };
-  }, [activeWalls]);
 
-  const handleMiniPlanClick = (e: React.MouseEvent<SVGSVGElement>) => {
-    if (!placingPoint) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const rx = (e.clientX - rect.left) / rect.width;
-    const ry = (e.clientY - rect.top) / rect.height;
-    const x = Number((planBounds.minX + rx * planBounds.width).toFixed(2));
-    const y = Number((planBounds.minY + ry * planBounds.height).toFixed(2));
+  const handleMovePanel = (pt: Point2D) => {
+    setHasCustomPanel(true);
+    setConfig((prev) => ({ ...prev, panelPosition: pt }));
+    showToast('Quadro Elettrico spostato: cavi ricalcolati!', 'info');
+  };
 
-    if (placingPoint === 'panel') {
-      setHasCustomPanel(true);
-      setConfig((prev) => ({ ...prev, panelPosition: { x, y } }));
-      showToast('Posizione Quadro Elettrico aggiornata: cavi ricalcolati!', 'info');
+  const handlePlaceOrMoveWaterManifold = (pt: Point2D) => {
+    setWaterManifoldRemoved(false);
+    setHasCustomWaterManifold(true);
+    setConfig((prev) => ({ ...prev, waterManifoldPosition: pt }));
+    if (defaults.placedWaterManifoldId) {
+      updateFurniture(defaults.placedWaterManifoldId, { x: pt.x, y: pt.y });
+      showToast('Collettore Acqua spostato: tubi sanitari ricalcolati!', 'success');
     } else {
-      setHasCustomManifold(true);
-      setConfig((prev) => ({ ...prev, manifoldPosition: { x, y } }));
-      showToast('Posizione Caldaia / Collettore aggiornata: tubi ricalcolati!', 'info');
+      const catItem = CATALOG.find((c) => c.id === 'manifold-water');
+      if (catItem) {
+        addFurnitureFromCatalog(catItem, pt.x, pt.y);
+      }
+      showToast('Collettore Acqua inserito sulla piantina: tubi sanitari collegati!', 'success');
     }
-    setPlacingPoint(null);
+  };
+
+  const handlePlaceOrMoveHeatingManifold = (pt: Point2D) => {
+    setHeatingManifoldRemoved(false);
+    setHasCustomHeatingManifold(true);
+    setConfig((prev) => ({ ...prev, heatingManifoldPosition: pt }));
+    if (defaults.placedHeatingManifoldId) {
+      updateFurniture(defaults.placedHeatingManifoldId, { x: pt.x, y: pt.y });
+      showToast('Collettore Riscaldamento spostato: dorsale e diramazioni ricalcolate!', 'success');
+    } else {
+      const catItem = CATALOG.find((c) => c.id === 'manifold-heating');
+      if (catItem) {
+        addFurnitureFromCatalog(catItem, pt.x, pt.y);
+      }
+      showToast('Collettore Riscaldamento inserito sulla piantina: tubi collegati!', 'success');
+    }
+  };
+
+  const handleDeleteWaterManifold = () => {
+    const ids = project.furniture
+      .filter((f) => f.geometryType === 'manifold_water')
+      .map((f) => f.id);
+    if (ids.length > 0) {
+      deleteFurnitureIds(ids);
+    }
+    setWaterManifoldRemoved(true);
+    setHasCustomWaterManifold(false);
+    showToast('Collettore Acqua rimosso dalla piantina (puoi reinserirlo quando vuoi)', 'info');
+  };
+
+  const handleDeleteHeatingManifold = () => {
+    const ids = project.furniture
+      .filter((f) => f.geometryType === 'manifold_heating')
+      .map((f) => f.id);
+    if (ids.length > 0) {
+      deleteFurnitureIds(ids);
+    }
+    setHeatingManifoldRemoved(true);
+    setHasCustomHeatingManifold(false);
+    showToast(
+      'Collettore Riscaldamento rimosso dalla piantina (puoi reinserirlo quando vuoi)',
+      'info'
+    );
+  };
+
+  const handleQuickPlaceCatalogItem = (item: FurnitureCatalogItem, pt: Point2D) => {
+    addFurnitureFromCatalog(item, pt.x, pt.y);
+    showToast(`${item.nome} inserito sulla piantina: impianto aggiornato!`, 'success');
   };
 
   const showElectrical = activeTab === 'all' || activeTab === 'electrical';
@@ -424,7 +489,7 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
 
   return (
     <div className="flex-1 h-full overflow-y-auto bg-slate-50 dark:bg-slate-950 p-4 md:p-6">
-      <div className="max-w-6xl mx-auto space-y-5">
+      <div className="max-w-7xl mx-auto space-y-5">
         {/* Intestazione + azioni export */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -604,209 +669,27 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
           </div>
         </div>
 
-        {/* Mini-pianta interattiva per posizionare Quadro Elettrico e Caldaia/Collettore */}
+        {/* Grande Schema Piantina Impianti interattivo (Acqua, Luce, Riscaldamento, Collettori e Dorsali) */}
         {activeWalls.length > 0 && (showElectrical || showPlumbing || showHvac) && (
-          <section className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 grid grid-cols-1 lg:grid-cols-3 gap-4 items-center">
-            <div className="space-y-2.5">
-              <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                <MapPin className="w-4 h-4 text-blue-600" />
-                Posizione Quadro e Collettore
-              </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                Le distanze di <strong>cavi elettrici</strong> e <strong>tubi idraulici</strong> sono calcolate dalla posizione reale dei due punti sulla tua piantina. Clicca uno dei pulsanti e poi clicca sulla pianta per spostarli.
-              </p>
-              <div className="flex flex-col gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPlacingPoint(placingPoint === 'panel' ? null : 'panel')}
-                  className={`px-3 py-2 rounded-xl border text-xs font-semibold flex items-center justify-between cursor-pointer transition-colors ${
-                    placingPoint === 'panel'
-                      ? 'bg-amber-500 text-white border-amber-600'
-                      : 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 hover:bg-amber-100'
-                  }`}
-                >
-                  <span className="flex items-center gap-1.5">
-                    <Zap className="w-3.5 h-3.5" />
-                    {placingPoint === 'panel'
-                      ? 'Clicca sulla piantina a destra...'
-                      : 'Sposta Quadro Elettrico (⚡)'}
-                  </span>
-                  <span className="font-mono text-[10px]">
-                    {config.panelPosition.x}m, {config.panelPosition.y}m
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPlacingPoint(placingPoint === 'manifold' ? null : 'manifold')}
-                  className={`px-3 py-2 rounded-xl border text-xs font-semibold flex items-center justify-between cursor-pointer transition-colors ${
-                    placingPoint === 'manifold'
-                      ? 'bg-sky-600 text-white border-sky-700'
-                      : 'bg-sky-50 dark:bg-sky-950/40 border-sky-200 dark:border-sky-800 text-sky-800 dark:text-sky-200 hover:bg-sky-100'
-                  }`}
-                >
-                  <span className="flex items-center gap-1.5">
-                    <Droplets className="w-3.5 h-3.5" />
-                    {placingPoint === 'manifold'
-                      ? 'Clicca sulla piantina a destra...'
-                      : 'Sposta Caldaia / Collettore (💧)'}
-                  </span>
-                  <span className="font-mono text-[10px]">
-                    {config.manifoldPosition.x}m, {config.manifoldPosition.y}m
-                  </span>
-                </button>
-              </div>
-            </div>
-
-            <div className="lg:col-span-2">
-              <svg
-                viewBox={`${planBounds.minX} ${planBounds.minY} ${planBounds.width} ${planBounds.height}`}
-                onClick={handleMiniPlanClick}
-                className={`w-full h-56 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 ${
-                  placingPoint ? 'cursor-crosshair ring-2 ring-blue-500' : ''
-                }`}
-              >
-                {/* Stanze rilevate */}
-                {rooms.map((rm) => (
-                  <g key={rm.id}>
-                    {rm.floorStrips.map((st, idx) => (
-                      <rect
-                        key={idx}
-                        x={st.x}
-                        y={st.y}
-                        width={st.width}
-                        height={st.height}
-                        fill={
-                          rm.kind === 'bagno'
-                            ? 'rgba(14,165,233,0.12)'
-                            : rm.kind === 'cucina' || rm.kind === 'soggiorno_cucina'
-                              ? 'rgba(245,158,11,0.10)'
-                              : 'rgba(100,116,139,0.08)'
-                        }
-                      />
-                    ))}
-                    <text
-                      x={rm.bounds.centerX}
-                      y={rm.bounds.centerY}
-                      textAnchor="middle"
-                      fontSize={Math.max(0.22, planBounds.width * 0.025)}
-                      fill="#64748b"
-                      fontWeight="600"
-                    >
-                      {rm.name} ({rm.areaSqm} m²)
-                    </text>
-                  </g>
-                ))}
-
-                {/* Percorsi indicativi tubi idraulici verso i punti acqua */}
-                {showPlumbing &&
-                  estimate.plumbing.fixtures.map((fx) => (
-                    <line
-                      key={`pl_${fx.id}`}
-                      x1={config.manifoldPosition.x}
-                      y1={config.manifoldPosition.y}
-                      x2={fx.x}
-                      y2={fx.y}
-                      stroke="#0284c7"
-                      strokeWidth={0.05}
-                      strokeDasharray="0.14 0.1"
-                      opacity={0.7}
-                    />
-                  ))}
-
-                {/* Muri attivi */}
-                {activeWalls.map((w) => (
-                  <line
-                    key={w.id}
-                    x1={w.start.x}
-                    y1={w.start.y}
-                    x2={w.end.x}
-                    y2={w.end.y}
-                    stroke="#334155"
-                    strokeWidth={Math.max(0.1, w.thickness)}
-                    strokeLinecap="square"
-                  />
-                ))}
-
-                {/* Punti acqua (sanitari/cucina/lavatrice) */}
-                {project.furniture.filter(isWaterFixture).map((f) => (
-                  <circle
-                    key={`wf_${f.id}`}
-                    cx={f.x}
-                    cy={f.y}
-                    r={0.18}
-                    fill="#0ea5e9"
-                    stroke="#ffffff"
-                    strokeWidth={0.05}
-                  />
-                ))}
-
-                {/* Terminali clima e termosifoni */}
-                {project.furniture.filter(isHvacTerminal).map((f) => {
-                  const isRad = f.geometryType === 'radiator' || f.geometryType === 'towel_warmer';
-                  return (
-                    <circle
-                      key={`ht_${f.id}`}
-                      cx={f.x}
-                      cy={f.y}
-                      r={0.17}
-                      fill={isRad ? '#ef4444' : '#06b6d4'}
-                      stroke="#ffffff"
-                      strokeWidth={0.05}
-                    />
-                  );
-                })}
-
-                {/* Generatori (PdC Monoblocco/Splittata, Caldaia Gas/Pellet) */}
-                {project.furniture.filter(isHvacGenerator).map((f) => (
-                  <rect
-                    key={`hg_${f.id}`}
-                    x={f.x - 0.22}
-                    y={f.y - 0.22}
-                    width={0.44}
-                    height={0.44}
-                    rx={0.08}
-                    fill={
-                      f.geometryType === 'boiler_pellet'
-                        ? '#b91c1c'
-                        : f.geometryType === 'boiler'
-                          ? '#f97316'
-                          : '#0369a1'
-                    }
-                    stroke="#ffffff"
-                    strokeWidth={0.05}
-                  />
-                ))}
-
-                {/* Quadro Elettrico */}
-                <g transform={`translate(${config.panelPosition.x}, ${config.panelPosition.y})`}>
-                  <circle r={0.28} fill="#f59e0b" stroke="#ffffff" strokeWidth={0.07} />
-                  <text
-                    y={0.1}
-                    textAnchor="middle"
-                    fontSize={0.28}
-                    fill="#ffffff"
-                    fontWeight="bold"
-                  >
-                    ⚡
-                  </text>
-                </g>
-
-                {/* Collettore / Caldaia */}
-                <g transform={`translate(${config.manifoldPosition.x}, ${config.manifoldPosition.y})`}>
-                  <circle r={0.28} fill="#0284c7" stroke="#ffffff" strokeWidth={0.07} />
-                  <text
-                    y={0.1}
-                    textAnchor="middle"
-                    fontSize={0.26}
-                    fill="#ffffff"
-                    fontWeight="bold"
-                  >
-                    💧
-                  </text>
-                </g>
-              </svg>
-            </div>
-          </section>
+          <MepBlueprintCanvas
+            project={project}
+            rooms={rooms}
+            config={config}
+            estimate={estimate}
+            hasPlacedWaterManifold={Boolean(defaults.placedWaterManifoldId)}
+            hasPlacedHeatingManifold={Boolean(defaults.placedHeatingManifoldId)}
+            showWaterManifold={!waterManifoldRemoved}
+            showHeatingManifold={!heatingManifoldRemoved}
+            showElectricalDefault={showElectrical}
+            showPlumbingDefault={showPlumbing}
+            showHvacDefault={showHvac}
+            onMovePanel={handleMovePanel}
+            onPlaceOrMoveWaterManifold={handlePlaceOrMoveWaterManifold}
+            onPlaceOrMoveHeatingManifold={handlePlaceOrMoveHeatingManifold}
+            onDeleteWaterManifold={handleDeleteWaterManifold}
+            onDeleteHeatingManifold={handleDeleteHeatingManifold}
+            onQuickPlaceCatalogItem={handleQuickPlaceCatalogItem}
+          />
         )}
 
         {/* ================= 1. IMPIANTO ELETTRICO ================= */}
@@ -1132,6 +1015,21 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
 
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 <select
+                  value={config.primaryPipeDiameterMm}
+                  onChange={(e) =>
+                    setConfig((c) => ({
+                      ...c,
+                      primaryPipeDiameterMm: Number(e.target.value) as 26 | 32,
+                    }))
+                  }
+                  title="Diametro dorsale primaria tra Pompa di Calore / Caldaia e Collettore Riscaldamento"
+                  className="px-2.5 py-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200 font-semibold"
+                >
+                  <option value={26}>Dorsale primaria: Ø 26 mm</option>
+                  <option value={32}>Dorsale primaria: Ø 32 mm</option>
+                </select>
+
+                <select
                   value={config.hvacGeneratorOverride}
                   onChange={(e) =>
                     setConfig((c) => ({
@@ -1171,27 +1069,27 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
 
             {/* Riepilogo tubazioni specifiche in base al sistema scelto */}
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 text-xs">
+              <div className="p-2.5 rounded-xl bg-red-50/80 dark:bg-red-950/40 border border-red-300 dark:border-red-800">
+                <div className="text-[11px] font-semibold text-red-700 dark:text-red-300">
+                  Dorsale Ø{estimate.hvac.primaryTrunkDiameterMm} (PdC/Caldaia → Coll.)
+                </div>
+                <div className="text-base font-bold font-mono text-slate-900 dark:text-white">
+                  {estimate.hvac.primaryTrunkPipeMeters} m
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  Tubo grande A+R ({estimate.hvac.primaryTrunkDistanceM} m tratta)
+                </div>
+              </div>
+
               <div className="p-2.5 rounded-xl bg-rose-50/70 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800">
                 <div className="text-[11px] text-rose-700 dark:text-rose-300">
-                  Acqua Risc./Idronico (A+R)
+                  Diramazioni Coll. → Termo (Ø16)
                 </div>
                 <div className="text-base font-bold font-mono text-slate-900 dark:text-white">
                   {estimate.hvac.heatingWaterPipeMeters} m
                 </div>
                 <div className="text-[10px] text-slate-500 truncate" title={estimate.hvac.heatingWaterPipeLabel}>
-                  {PIPE_MATERIAL_LABELS[config.pipeMaterial].label}
-                </div>
-              </div>
-
-              <div className="p-2.5 rounded-xl bg-sky-50/70 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800">
-                <div className="text-[11px] text-sky-700 dark:text-sky-300">
-                  Dorsale Monoblocco Ø26
-                </div>
-                <div className="text-base font-bold font-mono text-slate-900 dark:text-white">
-                  {estimate.hvac.monoblocPrimaryPipeMeters} m
-                </div>
-                <div className="text-[10px] text-slate-500">
-                  {estimate.hvac.hasMonoblocWater ? 'Acqua coibentato (A+R)' : 'Solo con PdC Monoblocco'}
+                  A+R • {estimate.hvac.heatingManifoldWays} vie collettore
                 </div>
               </div>
 
@@ -1267,7 +1165,7 @@ export const MepEstimatorView: React.FC<MepEstimatorViewProps> = ({
                         <th className="py-2 px-3 text-left rounded-l-lg">Terminale</th>
                         <th className="py-2 px-3 text-left">Stanza</th>
                         <th className="py-2 px-3 text-left">Tipo tubazione</th>
-                        <th className="py-2 px-3 text-right">Dist. generatore</th>
+                        <th className="py-2 px-3 text-right">Dist. collettore</th>
                         <th className="py-2 px-3 text-right">Metri tubo</th>
                         <th className="py-2 px-3 text-right rounded-r-lg">Condensa</th>
                       </tr>
