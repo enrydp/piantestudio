@@ -30,6 +30,7 @@ export interface Scene3DHandle {
   exportPng: () => void;
   exportGlb: () => Promise<void>;
   captureDataUrl: () => string | null;
+  getPathTracerSource: () => { group: THREE.Group; camera: THREE.Camera } | null;
 }
 
 /** Calcola posizione, colore e intensità del sole in base all'ora del giorno (6..21) */
@@ -605,6 +606,11 @@ export const Scene3D = forwardRef<Scene3DHandle>((_, ref) => {
       if (!ctx) return null;
       ctx.gl.render(ctx.scene, ctx.camera);
       return ctx.gl.domElement.toDataURL('image/png', 1.0);
+    },
+    getPathTracerSource: () => {
+      const ctx = threeCtxRef.current;
+      if (!ctx || !exportGroupRef.current) return null;
+      return { group: exportGroupRef.current, camera: ctx.camera };
     },
   }));
 

@@ -7,6 +7,7 @@
  * - RightPropertiesPanel (proprietà contestuali, catalogo JSON, luci/materiali/export 3D)
  */
 import React, { useEffect, useRef, useState } from 'react';
+import type * as THREE from 'three';
 import { HeaderWizard } from './components/HeaderWizard';
 import { LeftToolbar } from './components/LeftToolbar';
 import { RightPropertiesPanel } from './components/RightPropertiesPanel';
@@ -14,6 +15,7 @@ import { Toast } from './components/Toast';
 import { ShortcutsModal } from './components/ShortcutsModal';
 import { FloorplanCropModal } from './components/FloorplanCropModal';
 import { AiPhotoRenderModal } from './components/AiPhotoRenderModal';
+import { PathTracerRenderModal } from './components/PathTracerRenderModal';
 import { MepEstimatorView, type MepTabId } from './components/MepEstimatorView';
 import { FloorplanCanvas } from './editor2d/FloorplanCanvas';
 import { Scene3D, type Scene3DHandle } from './viewer3d/Scene3D';
@@ -50,6 +52,10 @@ export const App: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scene3DRef = useRef<Scene3DHandle>(null);
   const [aiSourceRenderUrl, setAiSourceRenderUrl] = useState<string | null>(null);
+  const [pathTracerSource, setPathTracerSource] = useState<{
+    group: THREE.Group;
+    camera: THREE.Camera;
+  } | null>(null);
   const [mepTab, setMepTab] = useState<MepTabId>('all');
 
   // Sincronizza classe 'dark' sull'elemento <html>
@@ -212,6 +218,15 @@ export const App: React.FC = () => {
     setAiSourceRenderUrl(dataUrl);
   };
 
+  const handleOpenPathTracerModal = () => {
+    const src = scene3DRef.current?.getPathTracerSource();
+    if (!src) {
+      showToast('Attendi il caricamento della scena 3D prima di avviare il Render HD', 'warning');
+      return;
+    }
+    setPathTracerSource(src);
+  };
+
   return (
     <div className="h-screen w-screen flex flex-col bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 overflow-hidden">
       <HeaderWizard />
@@ -243,6 +258,7 @@ export const App: React.FC = () => {
             onExportPng={handleExportPng}
             onExportGlb={handleExportGlb}
             onOpenAiPhotoModal={handleOpenAiPhotoModal}
+            onOpenPathTracerModal={handleOpenPathTracerModal}
           />
         )}
       </div>
@@ -260,6 +276,17 @@ export const App: React.FC = () => {
         <AiPhotoRenderModal
           sourceRenderDataUrl={aiSourceRenderUrl}
           onClose={() => setAiSourceRenderUrl(null)}
+        />
+      )}
+      {pathTracerSource && (
+        <PathTracerRenderModal
+          sourceGroup={pathTracerSource.group}
+          sourceCamera={pathTracerSource.camera}
+          onClose={() => setPathTracerSource(null)}
+          onSendToAiPhoto={(dataUrl) => {
+            setPathTracerSource(null);
+            setAiSourceRenderUrl(dataUrl);
+          }}
         />
       )}
     </div>

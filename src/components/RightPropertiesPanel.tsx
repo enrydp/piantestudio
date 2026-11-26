@@ -63,6 +63,7 @@ interface RightPropertiesPanelProps {
   onExportPng: () => void;
   onExportGlb: () => void;
   onOpenAiPhotoModal: () => void;
+  onOpenPathTracerModal: () => void;
 }
 
 const FLOOR_COLOR_PRESETS: Record<FloorTextureType, { name: string; hex: string }[]> = {
@@ -152,6 +153,7 @@ export const RightPropertiesPanel: React.FC<RightPropertiesPanelProps> = ({
   onExportPng,
   onExportGlb,
   onOpenAiPhotoModal,
+  onOpenPathTracerModal,
 }) => {
   const {
     step,
@@ -1762,11 +1764,20 @@ export const RightPropertiesPanel: React.FC<RightPropertiesPanelProps> = ({
               )}
             </section>
 
-            {/* Esportazioni e Foto Realistica AI */}
+            {/* Esportazioni, Ray-Tracing Locale e Foto Realistica AI */}
             <section className="space-y-2">
               <h3 className="font-semibold text-slate-800 dark:text-slate-100">
-                Foto AI ed Esportazione
+                Render Fotografico ed Esportazione
               </h3>
+              <button
+                type="button"
+                onClick={onOpenPathTracerModal}
+                className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-semibold flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                title="Calcola luce globale reale e ombre morbide direttamente sulla GPU (100% locale e online, zero AI)"
+              >
+                <Camera className="w-4 h-4" />
+                Render Fotografico HD (Ray-Tracing)
+              </button>
               <button
                 type="button"
                 onClick={onOpenAiPhotoModal}
