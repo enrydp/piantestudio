@@ -10,9 +10,12 @@ import {
   Compass,
   Crop,
   Maximize,
+  Move,
   RotateCcw,
   RotateCw,
   X,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import type { FloorplanImage } from '../types/project';
 import {
@@ -21,10 +24,15 @@ import {
   type QuadPoint,
 } from '../utils/perspective';
 
+export interface CropApplyMeta {
+  scaleRatio: number;
+  preserveCalibration: boolean;
+}
+
 interface FloorplanCropModalProps {
   floorplan: FloorplanImage;
   onCancel: () => void;
-  onApply: (cropped: FloorplanImage) => void;
+  onApply: (cropped: FloorplanImage, meta?: CropApplyMeta) => void;
 }
 
 interface NormRect {
@@ -47,7 +55,7 @@ type DragMode =
   | 'w'
   | 'draw';
 
-const MIN_SIZE = 0.06;
+const MIN_SIZE = 0.02;
 
 function clamp(v: number, min: number, max: number) {
   return Math.max(min, Math.min(max, v));
@@ -136,6 +144,8 @@ export const FloorplanCropModal: React.FC<FloorplanCropModalProps> = ({
 
   const [crop, setCrop] = useState<NormRect>({ x: 0.04, y: 0.04, w: 0.92, h: 0.92 });
   const [dragMode, setDragMode] = useState<DragMode>(null);
+  const [zoom, setZoom] = useState(1);
+  const [isApplying, setIsApplying] = useState(false);
 
   // Modalità "Allinea muro (2 click)"
   const [alignMode, setAlignMode] = useState(false);
@@ -313,8 +323,8 @@ export const FloorplanCropModal: React.FC<FloorplanCropModalProps> = ({
         setCrop({
           x: x0,
           y: y0,
-          w: Math.max(MIN_SIZE, x1 - x0),
-          h: Math.max(MIN_SIZE, y1 - y0),
+          w: Math.min(1 - x0, Math.max(MIN_SIZE, x1 - x0)),
+          h: Math.min(1 - y0, Math.max(MIN_SIZE, y1 - y0)),
         });
         return;
       }
@@ -352,46 +362,82 @@ export const FloorplanCropModal: React.FC<FloorplanCropModalProps> = ({
     };
   }, [dragMode]);
 
-  const handleApplyFinal = () => {
-    if (!sourceImgEl) return;
+  const handleApplyFinal = async () => {
+    if (isApplying) return;
+    setIsApplying(true);
+    try {
+      const imgEl = sourceImgEl ?? (await loadImg(floorplan.dataUrl));
 
-    // 1. Applica rotazione + slider trapezio V/H a risoluzione alta ma leggera (max 1800px)
-    const fullTransformed = buildTransformedCanvas(
-      sourceImgEl,
-      totalAngleDeg,
-      keystoneV,
-      keystoneH,
-      1800
-    );
+      // 1. Mantieni alta risoluzione PRIMA del ritaglio (fino a 4096 px) così anche 1 piano su un foglio multi-piano rimane nitido!
+      const rad = (totalAngleDeg * Math.PI) / 180;
+      const cos = Math.abs(Math.cos(rad));
+      const sin = Math.abs(Math.sin(rad));
+      const rawFullW = Math.ceil(imgEl.naturalWidth * cos + imgEl.naturalHeight * sin);
+      const rawFullH = Math.ceil(imgEl.naturalWidth * sin + imgEl.naturalHeight * cos);
+      const preScale = Math.min(1, 4096 / Math.max(rawFullW, rawFullH));
 
-    let finalCanvas: HTMLCanvasElement;
+      const fullTransformed = buildTransformedCanvas(
+        imgEl,
+        totalAngleDeg,
+        keystoneV,
+        keystoneH,
+        4096
+      );
 
-    if (quadMode) {
-      // 2A. Modalità 4 Angoli: rettifica il quadrilatero disegnato in un rettangolo dritto
-      finalCanvas = warpPerspectiveCanvas(fullTransformed, quad);
-    } else {
-      // 2B. Modalità Ritaglio standard
-      const sx = Math.round(crop.x * fullTransformed.width);
-      const sy = Math.round(crop.y * fullTransformed.height);
-      const sw = Math.max(32, Math.round(crop.w * fullTransformed.width));
-      const sh = Math.max(32, Math.round(crop.h * fullTransformed.height));
+      let finalCanvas: HTMLCanvasElement;
+      let postScale = 1;
+      const hasPerspectiveWarp =
+        quadMode || Math.abs(keystoneV) >= 0.002 || Math.abs(keystoneH) >= 0.002;
 
-      finalCanvas = document.createElement('canvas');
-      finalCanvas.width = sw;
-      finalCanvas.height = sh;
-      const ctx = finalCanvas.getContext('2d')!;
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, sw, sh);
-      ctx.drawImage(fullTransformed, sx, sy, sw, sh, 0, 0, sw, sh);
+      if (quadMode) {
+        // 2A. Modalità 4 Angoli: rettifica il quadrilatero disegnato in un rettangolo dritto
+        finalCanvas = warpPerspectiveCanvas(fullTransformed, quad);
+      } else {
+        // 2B. Modalità Ritaglio standard con clamping sicuro dentro i bordi del canvas
+        const sx = clamp(Math.round(crop.x * fullTransformed.width), 0, fullTransformed.width - 16);
+        const sy = clamp(Math.round(crop.y * fullTransformed.height), 0, fullTransformed.height - 16);
+        const sw = clamp(
+          Math.round(crop.w * fullTransformed.width),
+          16,
+          fullTransformed.width - sx
+        );
+        const sh = clamp(
+          Math.round(crop.h * fullTransformed.height),
+          16,
+          fullTransformed.height - sy
+        );
+
+        const maxOut = 2200;
+        postScale = Math.min(1, maxOut / Math.max(sw, sh));
+        const outW = Math.max(32, Math.round(sw * postScale));
+        const outH = Math.max(32, Math.round(sh * postScale));
+
+        finalCanvas = document.createElement('canvas');
+        finalCanvas.width = outW;
+        finalCanvas.height = outH;
+        const ctx = finalCanvas.getContext('2d')!;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, outW, outH);
+        ctx.drawImage(fullTransformed, sx, sy, sw, sh, 0, 0, outW, outH);
+      }
+
+      const scaleRatio = preScale * postScale;
+
+      onApply(
+        {
+          ...floorplan,
+          dataUrl: finalCanvas.toDataURL('image/jpeg', 0.93),
+          widthPx: finalCanvas.width,
+          heightPx: finalCanvas.height,
+        },
+        {
+          scaleRatio,
+          preserveCalibration: !hasPerspectiveWarp,
+        }
+      );
+    } finally {
+      setIsApplying(false);
     }
-
-    // Esporta in JPEG ad alta qualità (molto più leggero di un PNG 2000px da 10MB: zero lag e salvabile in localStorage)
-    onApply({
-      ...floorplan,
-      dataUrl: finalCanvas.toDataURL('image/jpeg', 0.9),
-      widthPx: finalCanvas.width,
-      heightPx: finalCanvas.height,
-    });
   };
 
   const baseQuarter = Math.round(totalAngleDeg / 90) * 90;
@@ -532,6 +578,28 @@ export const FloorplanCropModal: React.FC<FloorplanCropModalProps> = ({
               <RotateCw className="w-3.5 h-3.5" />
               +90°
             </button>
+
+            <div className="flex items-center gap-1 border-l border-slate-300 dark:border-slate-700 pl-2">
+              <button
+                type="button"
+                onClick={() => setZoom((z) => Math.max(1, Number((z - 0.35).toFixed(2))))}
+                title="Riduci zoom"
+                className="p-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 cursor-pointer"
+              >
+                <ZoomOut className="w-3.5 h-3.5" />
+              </button>
+              <span className="text-[10px] font-mono w-9 text-center text-slate-600 dark:text-slate-300">
+                {Math.round(zoom * 100)}%
+              </span>
+              <button
+                type="button"
+                onClick={() => setZoom((z) => Math.min(3.1, Number((z + 0.35).toFixed(2))))}
+                title="Ingrandisci per ritagliare con precisione un singolo piano"
+                className="p-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 cursor-pointer"
+              >
+                <ZoomIn className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
           {/* Riga 2: Slider Trapezio Verticale e Orizzontale */}
@@ -588,15 +656,18 @@ export const FloorplanCropModal: React.FC<FloorplanCropModalProps> = ({
                 setAlignHover(getNormPointer(e.clientX, e.clientY));
               }
             }}
-            className={`relative inline-block max-w-full max-h-[52vh] shadow-lg border border-slate-300 dark:border-slate-700 touch-none ${
-              quadMode ? 'cursor-default' : 'cursor-crosshair'
-            }`}
+            style={zoom > 1 ? { width: `${Math.round(zoom * 100)}%` } : undefined}
+            className={`relative inline-block shadow-lg border border-slate-300 dark:border-slate-700 touch-none ${
+              zoom > 1 ? 'max-w-none' : 'max-w-full max-h-[52vh]'
+            } ${quadMode ? 'cursor-default' : 'cursor-crosshair'}`}
           >
             <img
               src={previewUrl}
               alt="Piantina da ritagliare e correggere"
               draggable={false}
-              className="block max-w-full max-h-[52vh] w-auto h-auto pointer-events-none"
+              className={`block pointer-events-none ${
+                zoom > 1 ? 'w-full h-auto' : 'max-w-full max-h-[52vh] w-auto h-auto'
+              }`}
             />
 
             {/* Griglia blu di riferimento ortogonale */}
@@ -694,9 +765,10 @@ export const FloorplanCropModal: React.FC<FloorplanCropModalProps> = ({
                   }}
                 />
 
+                {/* Riquadro ritaglio: trascinando dentro disegni un NUOVO riquadro (perfetto per scegliere 1 piano!),
+                    mentre le 8 maniglie ridimensionano e la pillola centrale sposta il riquadro */}
                 <div
-                  onPointerDown={(e) => beginDrag('move', e)}
-                  className="absolute border-2 border-blue-500 shadow-[0_0_0_1px_rgba(255,255,255,0.8)] cursor-move"
+                  className="absolute border-2 border-blue-500 shadow-[0_0_0_1px_rgba(255,255,255,0.85)] pointer-events-none"
                   style={{
                     left: `${crop.x * 100}%`,
                     top: `${crop.y * 100}%`,
@@ -704,6 +776,16 @@ export const FloorplanCropModal: React.FC<FloorplanCropModalProps> = ({
                     height: `${crop.h * 100}%`,
                   }}
                 >
+                  {/* Maniglia centrale per spostare il riquadro esistente */}
+                  <div
+                    onPointerDown={(e) => beginDrag('move', e)}
+                    title="Trascina per spostare il riquadro; oppure clicca e trascina altrove per disegnare un nuovo riquadro su un singolo piano"
+                    className="pointer-events-auto absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 px-2 py-1 rounded-full bg-blue-600/90 hover:bg-blue-700 text-white text-[10px] font-semibold shadow-md flex items-center gap-1 cursor-move"
+                  >
+                    <Move className="w-3 h-3" />
+                    Sposta
+                  </div>
+
                   {(
                     [
                       { mode: 'nw', cls: '-top-2 -left-2 cursor-nwse-resize' },
@@ -715,7 +797,7 @@ export const FloorplanCropModal: React.FC<FloorplanCropModalProps> = ({
                     <div
                       key={h.mode}
                       onPointerDown={(e) => beginDrag(h.mode, e)}
-                      className={`absolute w-4 h-4 rounded-full bg-white border-2 border-blue-600 shadow ${h.cls}`}
+                      className={`pointer-events-auto absolute w-4 h-4 rounded-full bg-white border-2 border-blue-600 shadow ${h.cls}`}
                     />
                   ))}
 
@@ -730,7 +812,7 @@ export const FloorplanCropModal: React.FC<FloorplanCropModalProps> = ({
                     <div
                       key={h.mode}
                       onPointerDown={(e) => beginDrag(h.mode, e)}
-                      className={`absolute rounded-full bg-white border-2 border-blue-600 shadow ${h.cls}`}
+                      className={`pointer-events-auto absolute rounded-full bg-white border-2 border-blue-600 shadow ${h.cls}`}
                     />
                   ))}
                 </div>
@@ -773,11 +855,16 @@ export const FloorplanCropModal: React.FC<FloorplanCropModalProps> = ({
             </button>
             <button
               type="button"
-              onClick={handleApplyFinal}
-              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm cursor-pointer"
+              disabled={isApplying}
+              onClick={() => void handleApplyFinal()}
+              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm cursor-pointer"
             >
               <Check className="w-3.5 h-3.5" />
-              {quadMode ? 'Raddrizza dai 4 angoli' : 'Applica correzioni'}
+              {isApplying
+                ? 'Ritaglio in corso...'
+                : quadMode
+                  ? 'Raddrizza dai 4 angoli'
+                  : 'Applica ritaglio'}
             </button>
           </div>
         </div>

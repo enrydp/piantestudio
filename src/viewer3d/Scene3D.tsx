@@ -23,6 +23,7 @@ import { clipWallsAndOpeningsForRoom, detectRooms, type DetectedRoom } from '../
 import { captureHighResPng, exportSceneToGlb } from '../utils/export3d';
 import { RoomMesh3D } from './RoomMesh3D';
 import { FurnitureMesh3D } from './FurnitureMesh3D';
+import { SceneStylizer, stripStylizedOutlinesForExport } from './SceneStylizer';
 import type { CameraMode3D, RenderStylePreset } from '../types/project';
 
 export interface Scene3DHandle {
@@ -355,17 +356,45 @@ const SceneContent: React.FC<{
       ? '#edf2f7'
       : preset === 'evening'
         ? '#1e293b'
-        : sun.skyColor;
+        : preset === 'sketch'
+          ? '#f8f4ec'
+          : preset === 'cartoon'
+            ? '#cfe9ff'
+            : sun.skyColor;
 
-  const exposure = preset === 'studio' ? 1.12 : preset === 'evening' ? 1.02 : 1.08;
+  const exposure =
+    preset === 'studio'
+      ? 1.12
+      : preset === 'evening'
+        ? 1.02
+        : preset === 'cartoon'
+          ? 1.05
+          : preset === 'sketch'
+            ? 1.06
+            : 1.08;
   const mainSunIntensity =
     preset === 'evening'
       ? 0.95
       : preset === 'studio'
         ? sun.sunIntensity * 0.95
-        : sun.sunIntensity * 1.25;
+        : preset === 'sketch'
+          ? 0.9
+          : preset === 'cartoon'
+            ? 1.45
+            : sun.sunIntensity * 1.25;
   const roomLightIntensity =
-    preset === 'evening' ? 3.2 : showRoof ? 1.35 : preset === 'studio' ? 0.5 : 0.72;
+    preset === 'evening'
+      ? 3.2
+      : preset === 'cartoon' || preset === 'sketch'
+        ? 0.35
+        : showRoof
+          ? 1.35
+          : preset === 'studio'
+            ? 0.5
+            : 0.72;
+
+  // Versione sintetica della scena per aggiornare la stilizzazione Cartoon/Schizzo quando cambia layout o finiture
+  const stylizerVersion = `${contactKey}_${renderSettings.floorTexture}_${renderSettings.floorColor ?? ''}_${renderSettings.wallColor}_${showRoof}_${showBaseboards}_${visibleData.openings.length}`;
 
   return (
     <>
@@ -374,29 +403,32 @@ const SceneContent: React.FC<{
       <fog attach="fog" args={[bgColor, 30, 82]} />
 
       {/* Cielo fisico procedurale in modalità Realistico e Serale */}
-      {preset !== 'studio' && renderSettings.cameraMode !== 'top' && (
-        <Sky
-          distance={450}
-          sunPosition={sun.position}
-          inclination={0}
-          azimuth={0.25}
-          turbidity={preset === 'evening' ? 10 : 4.2}
-          rayleigh={preset === 'evening' ? 3.2 : 1.1}
-          mieCoefficient={0.005}
-          mieDirectionalG={0.82}
-        />
-      )}
+      {(preset === 'realistic' || preset === 'evening') &&
+        renderSettings.cameraMode !== 'top' && (
+          <Sky
+            distance={450}
+            sunPosition={sun.position}
+            inclination={0}
+            azimuth={0.25}
+            turbidity={preset === 'evening' ? 10 : 4.2}
+            rayleigh={preset === 'evening' ? 3.2 : 1.1}
+            mieCoefficient={0.005}
+            mieDirectionalG={0.82}
+          />
+        )}
 
       {/* Illuminazione architettonica multi-sorgente: emisferica + sole morbido + fill cielo opposto */}
       <hemisphereLight
         args={[
-          preset === 'evening' ? '#93c5fd' : '#f4f8ff',
-          preset === 'evening' ? '#5c4b3b' : '#c8b9a6',
+          preset === 'evening' ? '#93c5fd' : preset === 'sketch' ? '#fffdf8' : '#f4f8ff',
+          preset === 'evening' ? '#5c4b3b' : preset === 'sketch' ? '#e7dfd1' : '#c8b9a6',
           preset === 'evening'
             ? 0.48
-            : preset === 'studio'
-              ? 0.95
-              : sun.ambientIntensity + 0.42,
+            : preset === 'studio' || preset === 'sketch'
+              ? 1.08
+              : preset === 'cartoon'
+                ? 0.85
+                : sun.ambientIntensity + 0.42,
         ]}
       />
       <directionalLight
@@ -496,6 +528,13 @@ const SceneContent: React.FC<{
         ))}
       </group>
 
+      {/* Applica Cel-Shading (Cartoon) o Contorni a China (Schizzo SketchUp) 100% client-side */}
+      <SceneStylizer
+        targetRef={exportGroupRef}
+        preset={preset}
+        sceneVersion={stylizerVersion}
+      />
+
       {renderSettings.showGrid3D && (
         <Grid
           position={[0, 0.005, 0]}
@@ -553,7 +592,12 @@ export const Scene3D = forwardRef<Scene3DHandle>((_, ref) => {
       const roomSuffix = activeRoom
         ? `-${activeRoom.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
         : '';
-      await exportSceneToGlb(exportGroupRef.current, `${safeName}${roomSuffix}-modello-3d.glb`);
+      const restore = stripStylizedOutlinesForExport(exportGroupRef.current);
+      try {
+        await exportSceneToGlb(exportGroupRef.current, `${safeName}${roomSuffix}-modello-3d.glb`);
+      } finally {
+        restore();
+      }
       showToast('Modello 3D (.glb) esportato con successo!', 'success');
     },
     captureDataUrl: () => {

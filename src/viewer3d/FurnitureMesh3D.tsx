@@ -4,7 +4,7 @@
  */
 import React, { Suspense, useEffect, useMemo } from 'react';
 import * as THREE from 'three';
-import { useGLTF } from '@react-three/drei';
+import { RoundedBox, useGLTF } from '@react-three/drei';
 import type { Furniture, FurnitureMaterial, Opening, Wall } from '../types/project';
 import { getOpeningCenter, wallLength } from '../utils/geometry';
 import { getFurnitureMaterialMaps } from '../utils/proceduralTextures';
@@ -1007,51 +1007,119 @@ const ProceduralFurniture: React.FC<{
     case 'sofa_2':
     case 'sofa_3':
     case 'armchair': {
-      const legH = 0.08;
-      const baseH = h * 0.3;
-      const seatH = h * 0.16;
-      const backH = h - legH - baseH * 0.5;
+      const legH = 0.09;
+      const baseH = h * 0.28;
+      const seatH = h * 0.17;
+      const backH = h - legH - baseH * 0.45;
       const backD = d * 0.24;
       const armW = Math.min(0.18, w * 0.14);
       const cushions = geometryType === 'sofa_3' ? 3 : geometryType === 'sofa_2' ? 2 : 1;
-      const cushionW = (w - armW * 2 - 0.02 * (cushions + 1)) / cushions;
+      const cushionW = (w - armW * 2 - 0.025 * (cushions + 1)) / cushions;
 
       return (
         <group>
-          {/* Struttura base */}
-          <mesh position={[0, legH + baseH / 2, 0]} castShadow receiveShadow>
-            <boxGeometry args={[w, baseH, d]} />
+          {/* Struttura base smussata */}
+          <RoundedBox
+            args={[w, baseH, d]}
+            radius={0.035}
+            smoothness={3}
+            position={[0, legH + baseH / 2, 0]}
+            castShadow
+            receiveShadow
+          >
             {mainMat}
-          </mesh>
-          {/* Schienale */}
-          <mesh position={[0, legH + baseH * 0.5 + backH / 2, -d / 2 + backD / 2]} castShadow receiveShadow>
-            <boxGeometry args={[w, backH, backD]} />
+          </RoundedBox>
+          {/* Schienale imbottito */}
+          <RoundedBox
+            args={[w - 0.02, backH, backD]}
+            radius={0.045}
+            smoothness={3}
+            position={[0, legH + baseH * 0.5 + backH / 2, -d / 2 + backD / 2]}
+            castShadow
+            receiveShadow
+          >
             {mainMat}
-          </mesh>
-          {/* Braccioli */}
-          <mesh position={[-w / 2 + armW / 2, legH + baseH + h * 0.14, backD * 0.35]} castShadow receiveShadow>
-            <boxGeometry args={[armW, h * 0.32, d - backD * 0.7]} />
+          </RoundedBox>
+          {/* Braccioli arrotondati */}
+          <RoundedBox
+            args={[armW, h * 0.34, d - backD * 0.6]}
+            radius={0.04}
+            smoothness={3}
+            position={[-w / 2 + armW / 2, legH + baseH + h * 0.14, backD * 0.3]}
+            castShadow
+            receiveShadow
+          >
             {mainMat}
-          </mesh>
-          <mesh position={[w / 2 - armW / 2, legH + baseH + h * 0.14, backD * 0.35]} castShadow receiveShadow>
-            <boxGeometry args={[armW, h * 0.32, d - backD * 0.7]} />
+          </RoundedBox>
+          <RoundedBox
+            args={[armW, h * 0.34, d - backD * 0.6]}
+            radius={0.04}
+            smoothness={3}
+            position={[w / 2 - armW / 2, legH + baseH + h * 0.14, backD * 0.3]}
+            castShadow
+            receiveShadow
+          >
             {mainMat}
-          </mesh>
-          {/* Cuscini seduta */}
+          </RoundedBox>
+          {/* Cuscini seduta e schienale morbidi */}
           {Array.from({ length: cushions }).map((_, idx) => {
-            const cx = -w / 2 + armW + 0.02 + cushionW / 2 + idx * (cushionW + 0.02);
+            const cx = -w / 2 + armW + 0.025 + cushionW / 2 + idx * (cushionW + 0.025);
             return (
-              <mesh key={idx} position={[cx, legH + baseH + seatH / 2, backD * 0.45]} castShadow receiveShadow>
-                <boxGeometry args={[cushionW, seatH, d - backD - 0.04]} />
-                <meshStandardMaterial color={color} roughness={0.95} />
-              </mesh>
+              <React.Fragment key={idx}>
+                <RoundedBox
+                  args={[cushionW, seatH, d - backD - 0.03]}
+                  radius={0.045}
+                  smoothness={3}
+                  position={[cx, legH + baseH + seatH / 2 - 0.01, backD * 0.45]}
+                  castShadow
+                  receiveShadow
+                >
+                  {mainMat}
+                </RoundedBox>
+                <RoundedBox
+                  args={[cushionW - 0.02, backH * 0.62, 0.16]}
+                  radius={0.05}
+                  smoothness={3}
+                  position={[cx, legH + baseH + seatH + backH * 0.24, -d / 2 + backD + 0.06]}
+                  rotation={[-0.14, 0, 0]}
+                  castShadow
+                  receiveShadow
+                >
+                  {mainMat}
+                </RoundedBox>
+              </React.Fragment>
             );
           })}
-          {/* Piedini */}
-          {[-w / 2 + 0.08, w / 2 - 0.08].map((lx, i) =>
-            [-d / 2 + 0.08, d / 2 - 0.08].map((lz, j) => (
+          {/* Cuscini decorativi a contrasto sui divani */}
+          {cushions >= 2 && (
+            <>
+              <RoundedBox
+                args={[0.28, 0.28, 0.11]}
+                radius={0.045}
+                smoothness={3}
+                position={[-w / 2 + armW + 0.15, legH + baseH + seatH + 0.12, -d / 2 + backD + 0.16]}
+                rotation={[-0.22, 0.42, 0.08]}
+                castShadow
+              >
+                <meshStandardMaterial color="#e8dfd2" roughness={0.92} />
+              </RoundedBox>
+              <RoundedBox
+                args={[0.28, 0.28, 0.11]}
+                radius={0.045}
+                smoothness={3}
+                position={[w / 2 - armW - 0.15, legH + baseH + seatH + 0.12, -d / 2 + backD + 0.16]}
+                rotation={[-0.22, -0.42, -0.08]}
+                castShadow
+              >
+                <meshStandardMaterial color="#c9a986" roughness={0.92} />
+              </RoundedBox>
+            </>
+          )}
+          {/* Piedini affusolati */}
+          {[-w / 2 + 0.09, w / 2 - 0.09].map((lx, i) =>
+            [-d / 2 + 0.09, d / 2 - 0.09].map((lz, j) => (
               <mesh key={`${i}_${j}`} position={[lx, legH / 2, lz]} castShadow>
-                <cylinderGeometry args={[0.022, 0.018, legH, 8]} />
+                <cylinderGeometry args={[0.022, 0.015, legH, 10]} />
                 {legMat}
               </mesh>
             ))
@@ -1063,52 +1131,87 @@ const ProceduralFurniture: React.FC<{
     case 'coffee_table':
     case 'dining_table':
     case 'desk': {
-      const topT = 0.045;
+      const topT = 0.046;
       const legH = h - topT;
-      const legR = geometryType === 'coffee_table' ? 0.022 : 0.028;
+      const legR = geometryType === 'coffee_table' ? 0.02 : 0.026;
       return (
         <group>
-          <mesh position={[0, h - topT / 2, 0]} castShadow receiveShadow>
-            <boxGeometry args={[w, topT, d]} />
+          <RoundedBox
+            args={[w, topT, d]}
+            radius={0.014}
+            smoothness={2}
+            position={[0, h - topT / 2, 0]}
+            castShadow
+            receiveShadow
+          >
             {mainMat}
-          </mesh>
-          {[-w / 2 + 0.07, w / 2 - 0.07].map((lx, i) =>
-            [-d / 2 + 0.07, d / 2 - 0.07].map((lz, j) => (
+          </RoundedBox>
+          {[-w / 2 + 0.08, w / 2 - 0.08].map((lx, i) =>
+            [-d / 2 + 0.08, d / 2 - 0.08].map((lz, j) => (
               <mesh key={`${i}_${j}`} position={[lx, legH / 2, lz]} castShadow>
-                <boxGeometry args={[legR * 2, legH, legR * 2]} />
+                <cylinderGeometry args={[legR, legR * 0.8, legH, 10]} />
                 {legMat}
               </mesh>
             ))
           )}
           {geometryType === 'desk' && (
-            <mesh position={[w / 2 - 0.22, legH / 2, 0]} castShadow receiveShadow>
-              <boxGeometry args={[0.38, legH - 0.04, d - 0.08]} />
-              {mainMat}
-            </mesh>
+            <group position={[w / 2 - 0.22, legH / 2, 0]}>
+              <RoundedBox args={[0.38, legH - 0.04, d - 0.08]} radius={0.01} smoothness={2} castShadow receiveShadow>
+                {mainMat}
+              </RoundedBox>
+              {[0.18, 0, -0.18].map((dy, idx) => (
+                <mesh key={idx} position={[0, dy, (d - 0.08) / 2 + 0.01]} castShadow>
+                  <boxGeometry args={[0.14, 0.016, 0.018]} />
+                  {chromeMat}
+                </mesh>
+              ))}
+            </group>
           )}
         </group>
       );
     }
 
     case 'chair': {
-      const seatY = h * 0.52;
-      const seatT = 0.04;
+      const seatY = h * 0.5;
+      const seatT = 0.048;
+      const backH = h - seatY;
       return (
         <group>
-          <mesh position={[0, seatY, 0]} castShadow receiveShadow>
-            <boxGeometry args={[w, seatT, d]} />
+          {/* Seduta arrotondata */}
+          <RoundedBox
+            args={[w, seatT, d * 0.94]}
+            radius={0.018}
+            smoothness={2}
+            position={[0, seatY, 0.01]}
+            castShadow
+            receiveShadow
+          >
             {mainMat}
-          </mesh>
-          {/* Schienale */}
-          <mesh position={[0, seatY + (h - seatY) / 2, -d / 2 + 0.025]} castShadow receiveShadow>
-            <boxGeometry args={[w, h - seatY, 0.04]} />
+          </RoundedBox>
+          {/* Schienale ergonomico leggermente inclinato */}
+          <RoundedBox
+            args={[w * 0.94, backH * 0.72, 0.038]}
+            radius={0.016}
+            smoothness={2}
+            position={[0, seatY + backH * 0.62, -d / 2 + 0.035]}
+            rotation={[-0.1, 0, 0]}
+            castShadow
+            receiveShadow
+          >
             {mainMat}
-          </mesh>
-          {/* 4 gambe */}
-          {[-w / 2 + 0.04, w / 2 - 0.04].map((lx, i) =>
-            [-d / 2 + 0.04, d / 2 - 0.04].map((lz, j) => (
+          </RoundedBox>
+          {/* Montanti schienale */}
+          {[-w * 0.36, w * 0.36].map((mx, idx) => (
+            <mesh key={idx} position={[mx, seatY + backH * 0.3, -d / 2 + 0.04]} rotation={[-0.1, 0, 0]} castShadow>
+              <cylinderGeometry args={[0.014, 0.016, backH * 0.62, 8]} />
+              {legMat}
+            </mesh>
+          ))}
+          {/* 4 gambe affusolate */}
+          {[-w / 2 + 0.045, w / 2 - 0.045].map((lx, i) =>
+            [-d / 2 + 0.045, d / 2 - 0.045].map((lz, j) => (
               <mesh key={`${i}_${j}`} position={[lx, seatY / 2, lz]} castShadow>
-                <cylinderGeometry args={[0.018, 0.015, seatY, 8]} />
+                <cylinderGeometry args={[0.018, 0.013, seatY, 8]} />
                 {legMat}
               </mesh>
             ))
@@ -1118,24 +1221,68 @@ const ProceduralFurniture: React.FC<{
     }
 
     case 'tv_stand': {
-      const tvW = Math.min(w * 0.78, 1.35);
+      const tvW = Math.min(w * 0.78, 1.42);
       const tvH = tvW * 0.56;
+      const legH = 0.1;
+      const bodyH = Math.max(0.24, h - legH);
       return (
         <group>
-          {/* Mobile basso */}
-          <mesh position={[0, h / 2 + 0.04, 0]} castShadow receiveShadow>
-            <boxGeometry args={[w, h - 0.08, d]} />
+          {/* Mobile basso smussato con piedini */}
+          <RoundedBox
+            args={[w, bodyH, d]}
+            radius={0.014}
+            smoothness={2}
+            position={[0, legH + bodyH / 2, 0]}
+            castShadow
+            receiveShadow
+          >
             {mainMat}
-          </mesh>
+          </RoundedBox>
+          {/* Maniglie frontali */}
+          {[-w * 0.28, w * 0.28].map((hx, idx) => (
+            <mesh key={idx} position={[hx, legH + bodyH * 0.65, d / 2 + 0.012]} castShadow>
+              <boxGeometry args={[0.14, 0.016, 0.018]} />
+              {chromeMat}
+            </mesh>
+          ))}
+          {[-w / 2 + 0.09, w / 2 - 0.09].map((lx, i) =>
+            [-d / 2 + 0.06, d / 2 - 0.06].map((lz, j) => (
+              <mesh key={`${i}_${j}`} position={[lx, legH / 2, lz]} castShadow>
+                <cylinderGeometry args={[0.016, 0.012, legH, 8]} />
+                {legMat}
+              </mesh>
+            ))
+          )}
           {/* Piedistallo TV */}
-          <mesh position={[0, h + 0.06, -d * 0.1]} castShadow>
-            <boxGeometry args={[0.32, 0.12, 0.14]} />
-            <meshStandardMaterial color="#1e293b" roughness={0.35} metalness={0.5} />
+          <mesh position={[0, h + 0.05, -d * 0.08]} castShadow>
+            <boxGeometry args={[0.36, 0.018, 0.16]} />
+            <meshStandardMaterial color="#1e293b" roughness={0.3} metalness={0.65} />
           </mesh>
-          {/* Schermo TV */}
-          <mesh position={[0, h + 0.1 + tvH / 2, -d * 0.1]} castShadow>
-            <boxGeometry args={[tvW, tvH, 0.045]} />
-            <meshStandardMaterial color="#0f172a" roughness={0.18} metalness={0.4} />
+          <mesh position={[0, h + 0.11, -d * 0.1]} castShadow>
+            <boxGeometry args={[0.12, 0.12, 0.035]} />
+            <meshStandardMaterial color="#1e293b" roughness={0.3} metalness={0.65} />
+          </mesh>
+          {/* Cornice TV sottile */}
+          <RoundedBox
+            args={[tvW, tvH, 0.032]}
+            radius={0.008}
+            smoothness={2}
+            position={[0, h + 0.12 + tvH / 2, -d * 0.1]}
+            castShadow
+          >
+            <meshStandardMaterial color="#0f172a" roughness={0.28} metalness={0.5} />
+          </RoundedBox>
+          {/* Pannello vetro schermo lucido */}
+          <mesh position={[0, h + 0.12 + tvH / 2, -d * 0.1 + 0.017]}>
+            <planeGeometry args={[tvW - 0.03, tvH - 0.03]} />
+            <meshPhysicalMaterial
+              color="#0b1120"
+              roughness={0.08}
+              metalness={0.18}
+              clearcoat={1}
+              clearcoatRoughness={0.06}
+              envMapIntensity={1.5}
+            />
           </mesh>
         </group>
       );
@@ -1186,10 +1333,12 @@ const ProceduralFurniture: React.FC<{
     case 'kitchen_linear':
     case 'kitchen_island': {
       const topT = 0.045;
-      const bodyH = h - topT;
+      const plinthH = 0.1;
+      const bodyH = h - topT - plinthH;
       const cabY = h + 0.92;
       const cabH = 0.72;
       const cabD = 0.34;
+      const doorCount = Math.max(2, Math.round(w / 0.6));
       const linearUpperSegments =
         geometryType === 'kitchen_linear'
           ? computeKitchenWallUnitSegments(
@@ -1207,43 +1356,101 @@ const ProceduralFurniture: React.FC<{
           : [];
       return (
         <group>
+          {/* Zoccolo rientrante scuro moderno */}
+          <mesh position={[0, plinthH / 2, -0.02]} receiveShadow>
+            <boxGeometry args={[w - 0.02, plinthH, d - 0.08]} />
+            <meshStandardMaterial color="#272d36" roughness={0.6} metalness={0.25} />
+          </mesh>
           {/* Basi */}
-          <mesh position={[0, bodyH / 2, 0]} castShadow receiveShadow>
+          <mesh position={[0, plinthH + bodyH / 2, 0]} castShadow receiveShadow>
             <boxGeometry args={[w, bodyH, d - 0.03]} />
             {mainMat}
           </mesh>
-          {/* Piano di lavoro */}
-          <mesh position={[0, h - topT / 2, 0]} castShadow receiveShadow>
-            <boxGeometry args={[w + 0.02, topT, d]} />
-            <meshStandardMaterial color="#474c52" roughness={0.35} metalness={0.1} />
-          </mesh>
-          {/* Lavello e piano cottura per cucina lineare */}
+          {/* Maniglie frontali ante basi */}
+          {Array.from({ length: doorCount }).map((_, idx) => {
+            const dx = -w / 2 + ((idx + 0.5) / doorCount) * w;
+            return (
+              <mesh key={`kd_${idx}`} position={[dx, h - topT - 0.09, d / 2 - 0.005]} castShadow>
+                <boxGeometry args={[Math.min(0.16, (w / doorCount) * 0.4), 0.016, 0.02]} />
+                {chromeMat}
+              </mesh>
+            );
+          })}
+          {/* Piano di lavoro quarzo/pietra smussato */}
+          <RoundedBox
+            args={[w + 0.02, topT, d]}
+            radius={0.008}
+            smoothness={2}
+            position={[0, h - topT / 2, 0]}
+            castShadow
+            receiveShadow
+          >
+            <meshStandardMaterial color="#474c52" roughness={0.28} metalness={0.12} envMapIntensity={1.1} />
+          </RoundedBox>
+          {/* Lavello, miscelatore curvo, piano induzione e pensili per cucina lineare */}
           {geometryType === 'kitchen_linear' && (
             <>
-              <mesh position={[-w * 0.28, h + 0.005, 0]}>
-                <boxGeometry args={[Math.min(0.65, w * 0.25), 0.015, d * 0.68]} />
+              <mesh position={[-w * 0.28, h + 0.006, 0]}>
+                <boxGeometry args={[Math.min(0.65, w * 0.25), 0.014, d * 0.66]} />
                 {chromeMat}
               </mesh>
-              <mesh position={[-w * 0.28, h + 0.14, -d * 0.28]} castShadow>
-                <cylinderGeometry args={[0.015, 0.018, 0.28, 10]} />
+              {/* Miscelatore a collo d'oca */}
+              <mesh position={[-w * 0.28, h + 0.14, -d * 0.3]} castShadow>
+                <cylinderGeometry args={[0.014, 0.018, 0.28, 10]} />
                 {chromeMat}
               </mesh>
+              <mesh position={[-w * 0.28, h + 0.27, -d * 0.22]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+                <cylinderGeometry args={[0.012, 0.012, 0.16, 10]} />
+                {chromeMat}
+              </mesh>
+              {/* Piano cottura vetroceramica */}
               <mesh position={[w * 0.26, h + 0.006, 0]}>
-                <boxGeometry args={[Math.min(0.62, w * 0.24), 0.012, d * 0.72]} />
-                <meshStandardMaterial color="#181b20" roughness={0.2} metalness={0.5} />
+                <boxGeometry args={[Math.min(0.64, w * 0.25), 0.012, d * 0.72]} />
+                <meshPhysicalMaterial color="#111622" roughness={0.1} metalness={0.35} clearcoat={1} />
               </mesh>
+              {/* 4 zone induzione */}
+              {[-0.14, 0.14].map((ox, i) =>
+                [-0.12, 0.12].map((oz, j) => (
+                  <mesh
+                    key={`hz_${i}_${j}`}
+                    position={[w * 0.26 + ox, h + 0.014, oz]}
+                    rotation={[-Math.PI / 2, 0, 0]}
+                  >
+                    <ringGeometry args={[0.06, 0.072, 20]} />
+                    <meshStandardMaterial color="#475569" roughness={0.4} />
+                  </mesh>
+                ))
+              )}
               {/* Pensili superiori: si fermano automaticamente vicino alle finestre anche se le basi continuano sotto */}
-              {linearUpperSegments.map(([sx, ex], idx) => (
-                <mesh
-                  key={`klin_u_${idx}`}
-                  position={[(sx + ex) / 2, cabY, -d / 2 + cabD / 2 + 0.01]}
-                  castShadow
-                  receiveShadow
-                >
-                  <boxGeometry args={[ex - sx, cabH, cabD]} />
-                  {mainMat}
-                </mesh>
-              ))}
+              {linearUpperSegments.map(([sx, ex], idx) => {
+                const segW = ex - sx;
+                const segCenterX = (sx + ex) / 2;
+                const segDoors = Math.max(1, Math.round(segW / 0.55));
+                return (
+                  <group key={`klin_u_${idx}`}>
+                    <mesh
+                      position={[segCenterX, cabY, -d / 2 + cabD / 2 + 0.01]}
+                      castShadow
+                      receiveShadow
+                    >
+                      <boxGeometry args={[segW, cabH, cabD]} />
+                      {mainMat}
+                    </mesh>
+                    {Array.from({ length: segDoors }).map((_, di) => {
+                      const hx = sx + ((di + 0.5) / segDoors) * segW;
+                      return (
+                        <mesh
+                          key={`kh_${di}`}
+                          position={[hx, cabY - cabH / 2 + 0.07, -d / 2 + cabD + 0.016]}
+                        >
+                          <boxGeometry args={[Math.min(0.14, (segW / segDoors) * 0.42), 0.014, 0.016]} />
+                          {chromeMat}
+                        </mesh>
+                      );
+                    })}
+                  </group>
+                );
+              })}
             </>
           )}
         </group>
@@ -1252,46 +1459,92 @@ const ProceduralFurniture: React.FC<{
 
     case 'bed_single':
     case 'bed_double': {
-      const frameH = 0.26;
+      const frameH = 0.25;
       const mattressH = 0.22;
       const pillows = geometryType === 'bed_double' ? 2 : 1;
-      const pillowW = (w - 0.24) / pillows - 0.04;
+      const pillowW = (w - 0.24) / pillows - 0.05;
       return (
         <group>
-          {/* Giroletto */}
-          <mesh position={[0, frameH / 2 + 0.06, 0]} castShadow receiveShadow>
-            <boxGeometry args={[w, frameH, d]} />
-            <meshStandardMaterial color="#7d6046" roughness={0.68} />
-          </mesh>
-          {/* Testata */}
-          <mesh position={[0, h / 2, -d / 2 + 0.05]} castShadow receiveShadow>
-            <boxGeometry args={[w + 0.04, h, 0.1]} />
-            <meshStandardMaterial color="#6e543d" roughness={0.7} />
-          </mesh>
-          {/* Materasso + coperta */}
-          <mesh position={[0, frameH + 0.06 + mattressH / 2, 0.04]} castShadow receiveShadow>
-            <boxGeometry args={[w - 0.06, mattressH, d - 0.14]} />
+          {/* Piedini letto */}
+          {[-w / 2 + 0.08, w / 2 - 0.08].map((lx, i) =>
+            [-d / 2 + 0.08, d / 2 - 0.08].map((lz, j) => (
+              <mesh key={`bl_${i}_${j}`} position={[lx, 0.04, lz]} castShadow>
+                <cylinderGeometry args={[0.022, 0.016, 0.08, 8]} />
+                {legMat}
+              </mesh>
+            ))
+          )}
+          {/* Giroletto smussato */}
+          <RoundedBox
+            args={[w, frameH, d]}
+            radius={0.03}
+            smoothness={2}
+            position={[0, frameH / 2 + 0.07, 0]}
+            castShadow
+            receiveShadow
+          >
+            <meshStandardMaterial color="#7d6046" roughness={0.62} />
+          </RoundedBox>
+          {/* Testata imbottita arrotondata */}
+          <RoundedBox
+            args={[w + 0.06, h, 0.11]}
+            radius={0.04}
+            smoothness={3}
+            position={[0, h / 2, -d / 2 + 0.055]}
+            castShadow
+            receiveShadow
+          >
+            <meshStandardMaterial color="#6e543d" roughness={0.72} />
+          </RoundedBox>
+          {/* Materasso con lenzuolo bianco fresco */}
+          <RoundedBox
+            args={[w - 0.07, mattressH, d - 0.14]}
+            radius={0.045}
+            smoothness={3}
+            position={[0, frameH + 0.07 + mattressH / 2, 0.04]}
+            castShadow
+            receiveShadow
+          >
+            <meshStandardMaterial color="#f8fafc" roughness={0.92} />
+          </RoundedBox>
+          {/* Piumone / copriletto soffice smussato */}
+          <RoundedBox
+            args={[w - 0.02, mattressH * 0.98, d * 0.64]}
+            radius={0.055}
+            smoothness={3}
+            position={[0, frameH + 0.085 + mattressH / 2, d * 0.14]}
+            castShadow
+            receiveShadow
+          >
             {mainMat}
-          </mesh>
-          {/* Copriletto */}
-          <mesh position={[0, frameH + 0.08 + mattressH / 2, d * 0.14]} castShadow receiveShadow>
-            <boxGeometry args={[w - 0.02, mattressH * 0.96, d * 0.62]} />
-            <meshStandardMaterial color={color} roughness={0.92} />
-          </mesh>
-          {/* Cuscini */}
+          </RoundedBox>
+          {/* Risvolto decorativo superiore del copriletto */}
+          <RoundedBox
+            args={[w - 0.01, 0.06, 0.2]}
+            radius={0.025}
+            smoothness={2}
+            position={[0, frameH + 0.095 + mattressH, -d * 0.15]}
+            castShadow
+          >
+            <meshStandardMaterial color="#f1f5f9" roughness={0.92} />
+          </RoundedBox>
+          {/* Cuscini soffici arrotondati */}
           {Array.from({ length: pillows }).map((_, i) => (
-            <mesh
+            <RoundedBox
               key={i}
+              args={[pillowW, 0.14, 0.4]}
+              radius={0.05}
+              smoothness={3}
               position={[
                 -w / 2 + 0.14 + pillowW / 2 + i * (pillowW + 0.08),
-                frameH + 0.06 + mattressH + 0.06,
-                -d / 2 + 0.32,
+                frameH + 0.08 + mattressH + 0.065,
+                -d / 2 + 0.34,
               ]}
+              rotation={[0.14, 0, 0]}
               castShadow
             >
-              <boxGeometry args={[pillowW, 0.12, 0.38]} />
               <meshStandardMaterial color="#ffffff" roughness={0.9} />
-            </mesh>
+            </RoundedBox>
           ))}
         </group>
       );
@@ -1338,17 +1591,61 @@ const ProceduralFurniture: React.FC<{
     case 'sink': {
       return (
         <group>
-          <mesh position={[0, h * 0.42, 0]} castShadow receiveShadow>
-            <boxGeometry args={[w * 0.92, h * 0.84, d * 0.9]} />
-            <meshStandardMaterial color="#d8d3c9" roughness={0.6} />
-          </mesh>
-          <mesh position={[0, h * 0.89, 0]} castShadow receiveShadow>
-            <boxGeometry args={[w, h * 0.14, d]} />
-            {mainMat}
-          </mesh>
-          <mesh position={[0, h + 0.08, -d * 0.34]} castShadow>
-            <cylinderGeometry args={[0.016, 0.02, 0.16, 10]} />
+          {/* Mobile sospeso / base lavabo smussato */}
+          <RoundedBox
+            args={[w * 0.94, h * 0.72, d * 0.9]}
+            radius={0.014}
+            smoothness={2}
+            position={[0, h * 0.48, 0]}
+            castShadow
+            receiveShadow
+          >
+            <meshStandardMaterial color="#dfd8ce" roughness={0.55} />
+          </RoundedBox>
+          {/* Maniglia cassetto */}
+          <mesh position={[0, h * 0.68, d * 0.45 + 0.012]} castShadow>
+            <boxGeometry args={[w * 0.32, 0.016, 0.018]} />
             {chromeMat}
+          </mesh>
+          {/* Top lavabo ceramica arrotondato */}
+          <RoundedBox
+            args={[w, h * 0.14, d]}
+            radius={0.018}
+            smoothness={2}
+            position={[0, h * 0.91, 0]}
+            castShadow
+            receiveShadow
+          >
+            {mainMat}
+          </RoundedBox>
+          {/* Miscelatore */}
+          <mesh position={[0, h + 0.08, -d * 0.34]} castShadow>
+            <cylinderGeometry args={[0.015, 0.018, 0.16, 10]} />
+            {chromeMat}
+          </mesh>
+          <mesh position={[0, h + 0.14, -d * 0.27]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+            <cylinderGeometry args={[0.011, 0.011, 0.11, 10]} />
+            {chromeMat}
+          </mesh>
+          {/* Specchio bagno retroilluminato a LED */}
+          <mesh position={[0, h + 0.68, -d / 2 + 0.025]}>
+            <boxGeometry args={[w * 0.96, 0.74, 0.018]} />
+            <meshStandardMaterial
+              color="#fff8ea"
+              emissive="#ffefd2"
+              emissiveIntensity={0.65}
+              roughness={0.3}
+            />
+          </mesh>
+          <mesh position={[0, h + 0.68, -d / 2 + 0.04]}>
+            <boxGeometry args={[w * 0.9, 0.68, 0.012]} />
+            <meshPhysicalMaterial
+              color="#dbeafe"
+              roughness={0.05}
+              metalness={0.85}
+              clearcoat={1}
+              envMapIntensity={1.6}
+            />
           </mesh>
         </group>
       );

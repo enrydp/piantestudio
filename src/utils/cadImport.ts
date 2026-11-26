@@ -567,19 +567,32 @@ export interface CadFloorplanRenderResult {
   padMeters: number;
 }
 
+export interface CadBounds {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+}
+
 /**
  * Renderizza i layer visibili del file CAD in una piantina ad alta risoluzione
  * restituendo il fattore pixelsPerMeter ESATTO per la calibrazione automatica 1:1.
+ * Supporta `cropBounds` per estrarre in qualità vettoriale piena un singolo piano da un DWG multi-piano!
  */
 export function renderCadToFloorplanImage(
   doc: ParsedCadDocument,
   unit: CadUnit,
   visibleLayers: Set<string>,
-  wallLayers: Set<string>
+  wallLayers: Set<string>,
+  includeTexts = false,
+  cropBounds?: CadBounds | null
 ): CadFloorplanRenderResult {
+  const b = cropBounds ?? doc.bounds;
+  const bWidth = Math.max(1e-3, b.maxX - b.minX);
+  const bHeight = Math.max(1e-3, b.maxY - b.minY);
   const toM = CAD_UNIT_TO_METERS[unit];
-  const rawW = Math.max(0.5, doc.bounds.width * toM);
-  const rawH = Math.max(0.5, doc.bounds.height * toM);
+  const rawW = Math.max(0.5, bWidth * toM);
+  const rawH = Math.max(0.5, bHeight * toM);
   const padMeters = Math.max(0.4, Math.min(1.2, Math.max(rawW, rawH) * 0.04));
 
   const totalW = rawW + padMeters * 2;
@@ -600,9 +613,16 @@ export function renderCadToFloorplanImage(
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, widthPx, heightPx);
 
-  const mapX = (cadX: number) => ((cadX - doc.bounds.minX) * toM + padMeters) * pixelsPerMeter;
+  const mapX = (cadX: number) => ((cadX - b.minX) * toM + padMeters) * pixelsPerMeter;
   // In CAD l'asse Y cresce verso l'alto, su canvas verso il basso
-  const mapY = (cadY: number) => ((doc.bounds.maxY - cadY) * toM + padMeters) * pixelsPerMeter;
+  const mapY = (cadY: number) => ((b.maxY - cadY) * toM + padMeters) * pixelsPerMeter;
+
+  const inCrop = (x: number, y: number) =>
+    !cropBounds ||
+    (x >= b.minX - bWidth * 0.05 &&
+      x <= b.maxX + bWidth * 0.05 &&
+      y >= b.minY - bHeight * 0.05 &&
+      y <= b.maxY + bHeight * 0.05);
 
   // Disegna prima i layer non-muro in grigio medio, poi i layer muro in nero nitido
   ctx.lineCap = 'round';
@@ -615,6 +635,7 @@ export function renderCadToFloorplanImage(
 
     for (const s of doc.segments) {
       if (!visibleLayers.has(s.layer)) continue;
+      if (!inCrop(s.x1, s.y1) && !inCrop(s.x2, s.y2)) continue;
       const isWall = wallLayers.has(s.layer);
       if ((pass === 'wall') !== isWall) continue;
       ctx.moveTo(mapX(s.x1), mapY(s.y1));
@@ -624,6 +645,7 @@ export function renderCadToFloorplanImage(
 
     for (const a of doc.arcs) {
       if (!visibleLayers.has(a.layer)) continue;
+      if (!inCrop(a.cx, a.cy)) continue;
       const isWall = wallLayers.has(a.layer);
       if ((pass === 'wall') !== isWall) continue;
       ctx.beginPath();
@@ -640,14 +662,18 @@ export function renderCadToFloorplanImage(
     }
   }
 
-  // Disegna testi e quote CAD
-  ctx.fillStyle = '#1e3a8a';
-  ctx.textBaseline = 'middle';
-  for (const t of doc.texts) {
-    if (!visibleLayers.has(t.layer)) continue;
-    const fontPx = Math.max(9, Math.min(24, t.height * toM * pixelsPerMeter * 0.95));
-    ctx.font = `600 ${Math.round(fontPx)}px sans-serif`;
-    ctx.fillText(t.text, mapX(t.x), mapY(t.y));
+  // Disegna testi e quote CAD solo se espressamente attivati dall'utente (spenti di default per mantenere la pianta pulita)
+  if (includeTexts) {
+    ctx.fillStyle = 'rgba(30, 58, 138, 0.72)';
+    ctx.textBaseline = 'middle';
+    for (const t of doc.texts) {
+      if (!visibleLayers.has(t.layer)) continue;
+      if (!inCrop(t.x, t.y)) continue;
+      if (t.text.length > 42) continue;
+      const fontPx = Math.max(7, Math.min(13, t.height * toM * pixelsPerMeter * 0.8));
+      ctx.font = `500 ${Math.round(fontPx)}px sans-serif`;
+      ctx.fillText(t.text, mapX(t.x), mapY(t.y));
+    }
   }
 
   return {
@@ -678,9 +704,11 @@ export function extractWallsFromCad(
   padMeters: number,
   defaultThickness: number,
   defaultHeight: number,
-  idGen: (prefix: string) => string
+  idGen: (prefix: string) => string,
+  cropBounds?: CadBounds | null
 ): Wall[] {
   if (wallLayers.size === 0) return [];
+  const b = cropBounds ?? doc.bounds;
   const toM = CAD_UNIT_TO_METERS[unit];
 
   interface SegM {
@@ -697,10 +725,15 @@ export function extractWallsFromCad(
   const segs: SegM[] = [];
   for (const s of doc.segments) {
     if (!wallLayers.has(s.layer)) continue;
-    const x1 = (s.x1 - doc.bounds.minX) * toM + padMeters;
-    const y1 = (doc.bounds.maxY - s.y1) * toM + padMeters;
-    const x2 = (s.x2 - doc.bounds.minX) * toM + padMeters;
-    const y2 = (doc.bounds.maxY - s.y2) * toM + padMeters;
+    if (cropBounds) {
+      const midX = (s.x1 + s.x2) / 2;
+      const midY = (s.y1 + s.y2) / 2;
+      if (midX < b.minX || midX > b.maxX || midY < b.minY || midY > b.maxY) continue;
+    }
+    const x1 = (s.x1 - b.minX) * toM + padMeters;
+    const y1 = (b.maxY - s.y1) * toM + padMeters;
+    const x2 = (s.x2 - b.minX) * toM + padMeters;
+    const y2 = (b.maxY - s.y2) * toM + padMeters;
     const len = Math.hypot(x2 - x1, y2 - y1);
     if (len < 0.22 || len > 45) continue;
     segs.push({

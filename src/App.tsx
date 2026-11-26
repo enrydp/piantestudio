@@ -253,7 +253,7 @@ export const App: React.FC = () => {
         <FloorplanCropModal
           floorplan={project.floorplan}
           onCancel={() => setShowCropModal(false)}
-          onApply={(cropped) => applyCroppedFloorplan(cropped)}
+          onApply={(cropped, meta) => applyCroppedFloorplan(cropped, meta)}
         />
       )}
       {aiSourceRenderUrl && (

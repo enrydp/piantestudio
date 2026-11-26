@@ -225,7 +225,10 @@ interface ProjectStore {
 
   // Step 0: Piantina, Calibrazione, Muri
   setFloorplan: (floorplan: FloorplanImage | null) => void;
-  applyCroppedFloorplan: (cropped: FloorplanImage) => void;
+  applyCroppedFloorplan: (
+    cropped: FloorplanImage,
+    meta?: { scaleRatio: number; preserveCalibration: boolean }
+  ) => void;
   applyCadImport: (floorplan: FloorplanImage, pixelsPerMeter: number, walls: Wall[]) => void;
   setFloorplanOpacity: (opacity: number) => void;
   setCalibrationPoint: (which: 'A' | 'B', ptImagePx: Point2D) => void;
@@ -486,16 +489,32 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
       }
     },
 
-    applyCroppedFloorplan: (cropped) => {
+    applyCroppedFloorplan: (cropped, meta) => {
+      const currentCal = get().project.calibration;
+      const keepScale =
+        Boolean(meta?.preserveCalibration) &&
+        currentCal.isCalibrated &&
+        currentCal.pixelsPerMeter > 0 &&
+        (meta?.scaleRatio ?? 1) > 0;
+
       commit((p) => ({
         ...p,
         floorplan: cropped,
-        // Azzera la calibrazione perché ritaglio/trapezio/4 angoli cambiano scala e coordinate
-        calibration: { ...DEFAULT_CALIBRATION },
+        calibration: keepScale
+          ? {
+              pointA: null,
+              pointB: null,
+              realLengthCm: null,
+              pixelsPerMeter: Number((p.calibration.pixelsPerMeter * (meta?.scaleRatio ?? 1)).toFixed(4)),
+              isCalibrated: true,
+            }
+          : { ...DEFAULT_CALIBRATION },
       }));
-      set({ showCropModal: false, activeTool: 'calibrate' });
+      set({ showCropModal: false, activeTool: keepScale ? 'wall' : 'calibrate' });
       get().showToast(
-        `Piantina aggiornata (${cropped.widthPx}×${cropped.heightPx} px)! Clicca due punti noti per calibrare.`,
+        keepScale
+          ? `Piano ritagliato (${cropped.widthPx}×${cropped.heightPx} px) mantenendo la scala 1:1!`
+          : `Piantina ritagliata (${cropped.widthPx}×${cropped.heightPx} px)! Clicca due punti noti per calibrare.`,
         'success'
       );
     },

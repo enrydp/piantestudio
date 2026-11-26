@@ -1492,6 +1492,8 @@ export const RightPropertiesPanel: React.FC<RightPropertiesPanelProps> = ({
                     { id: 'realistic', label: 'Realistico', desc: 'Cielo + PBR + AO' },
                     { id: 'studio', label: 'Studio', desc: 'Catalogo chiaro' },
                     { id: 'evening', label: 'Serale', desc: 'Luci calde' },
+                    { id: 'cartoon', label: 'Cartoon', desc: 'Cel + contorni' },
+                    { id: 'sketch', label: 'Schizzo', desc: 'Stile SketchUp' },
                   ] as const
                 ).map((p) => {
                   const active = (project.renderSettings.renderPreset ?? 'realistic') === p.id;

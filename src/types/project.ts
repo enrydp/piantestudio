@@ -217,7 +217,7 @@ export interface Furniture {
 
 export type FloorTextureType = 'parquet' | 'piastrelle' | 'cemento';
 export type CameraMode3D = 'orbit' | 'top' | 'dollhouse' | 'first_person';
-export type RenderStylePreset = 'realistic' | 'studio' | 'evening';
+export type RenderStylePreset = 'realistic' | 'studio' | 'evening' | 'cartoon' | 'sketch';
 
 /** Impostazioni di rendering 3D (Step 3) */
 export interface RenderSettings {
