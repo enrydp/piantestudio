@@ -218,6 +218,8 @@ export const PhotographicFinishShader = {
     clarity: { value: 0.14 },
     contrast: { value: 1.04 },
     saturation: { value: 1.04 },
+    splitTone: { value: 0.0 },
+    chromaticAberration: { value: 0.0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -235,6 +237,8 @@ export const PhotographicFinishShader = {
     uniform float clarity;
     uniform float contrast;
     uniform float saturation;
+    uniform float splitTone;
+    uniform float chromaticAberration;
 
     varying vec2 vUv;
 
@@ -257,6 +261,14 @@ export const PhotographicFinishShader = {
       vec4 centerSample = texture2D(tDiffuse, vUv);
       vec3 color = centerSample.rgb;
 
+      // 0. Micro-aberrazione cromatica ottica solo sui bordi estremi della lente
+      if (chromaticAberration > 0.00005) {
+        vec2 offset = (vUv - 0.5) * chromaticAberration;
+        float r = texture2D(tDiffuse, vUv + offset).r;
+        float b = texture2D(tDiffuse, vUv - offset).b;
+        color = vec3(r, color.g, b);
+      }
+
       // 1. Micro-nitidezza (Clarity) delicata per venature legno, fughe e spigoli
       if (clarity > 0.001) {
         vec2 texel = 1.0 / max(resolution, vec2(1.0));
@@ -269,11 +281,23 @@ export const PhotographicFinishShader = {
         color += detail * clarity;
       }
 
-      // 2. Contrasto filmico leggero e saturazione naturale
+      // 2. Contrasto filmico S-curve morbido e saturazione naturale
       if (abs(contrast - 1.0) > 0.001) {
-        color = (color - 0.5) * contrast + 0.5;
+        vec3 c = clamp(color, 0.0, 1.0);
+        vec3 sCurve = c * c * (3.0 - 2.0 * c);
+        color = mix(c, sCurve, clamp((contrast - 1.0) * 2.4, 0.0, 0.55));
       }
+
+      // 2b. Color Grading fotografico architettonico (alte luci calde, ombre profonde leggermente fredde)
       float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+      if (splitTone > 0.001) {
+        vec3 shadowTint = vec3(0.95, 0.98, 1.04);
+        vec3 highlightTint = vec3(1.03, 1.005, 0.96);
+        float hiWeight = smoothstep(0.28, 0.85, luma);
+        vec3 grade = mix(shadowTint, highlightTint, hiWeight);
+        color *= mix(vec3(1.0), grade, splitTone);
+      }
+
       if (abs(saturation - 1.0) > 0.001) {
         color = mix(vec3(luma), color, saturation);
       }

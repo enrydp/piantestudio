@@ -41,36 +41,41 @@ export function buildWallGeometryWithCSG(
 
       const localX = (op.position - 0.5) * len;
       const cutDepth = wall.thickness + 0.16;
+      // Estende il taglio leggermente sotto y=0 per porte/archi a filo pavimento:
+      // evita facce coplanari residue a y=0 che generano Z-fighting (sfarfallio) sul pavimento!
+      const bottomExtend = clampedSill <= 0.005 ? 0.06 : 0;
+      const bottomY = clampedSill - bottomExtend;
 
       if (op.type === 'arch') {
-        // Parte rettangolare inferiore dell'arco + semicilindro superiore
-        const archRadius = clampedWidth / 2;
-        const rectHeight = Math.max(0.1, clampedHeight - archRadius);
+        // Profilo unico estruso (rettangolo inferiore + semicerchio superiore) per taglio CSG pulito
+        // senza giunzione coplanare tra scatola e cilindro e senza pelle residua a y=0
+        const archRadius = Math.min(clampedWidth / 2, Math.max(0.05, clampedHeight - 0.05));
+        const springY = clampedSill + Math.max(0.05, clampedHeight - archRadius);
 
-        const rectGeo = new THREE.BoxGeometry(clampedWidth, rectHeight, cutDepth);
-        rectGeo.translate(localX, clampedSill + rectHeight / 2, 0);
-        const rectBrush = new Brush(rectGeo);
-        rectBrush.updateMatrixWorld();
-        resultBrush = evaluator.evaluate(resultBrush, rectBrush, SUBTRACTION);
-        resultBrush.updateMatrixWorld();
-        rectGeo.dispose();
+        const shape = new THREE.Shape();
+        shape.moveTo(-archRadius, bottomY);
+        shape.lineTo(archRadius, bottomY);
+        shape.lineTo(archRadius, springY);
+        shape.absarc(0, springY, archRadius, 0, Math.PI, false);
+        shape.closePath();
 
-        const cylGeo = new THREE.CylinderGeometry(
-          archRadius,
-          archRadius,
-          cutDepth,
-          24
-        );
-        cylGeo.rotateX(Math.PI / 2);
-        cylGeo.translate(localX, clampedSill + rectHeight, 0);
-        const cylBrush = new Brush(cylGeo);
-        cylBrush.updateMatrixWorld();
-        resultBrush = evaluator.evaluate(resultBrush, cylBrush, SUBTRACTION);
+        const archGeo = new THREE.ExtrudeGeometry(shape, {
+          depth: cutDepth,
+          bevelEnabled: false,
+          curveSegments: 24,
+        });
+        archGeo.translate(localX, 0, -cutDepth / 2);
+        archGeo.computeVertexNormals();
+
+        const archBrush = new Brush(archGeo);
+        archBrush.updateMatrixWorld();
+        resultBrush = evaluator.evaluate(resultBrush, archBrush, SUBTRACTION);
         resultBrush.updateMatrixWorld();
-        cylGeo.dispose();
+        archGeo.dispose();
       } else {
-        const holeGeo = new THREE.BoxGeometry(clampedWidth, clampedHeight, cutDepth);
-        holeGeo.translate(localX, clampedSill + clampedHeight / 2, 0);
+        const holeH = clampedHeight + bottomExtend;
+        const holeGeo = new THREE.BoxGeometry(clampedWidth, holeH, cutDepth);
+        holeGeo.translate(localX, bottomY + holeH / 2, 0);
         const holeBrush = new Brush(holeGeo);
         holeBrush.updateMatrixWorld();
 

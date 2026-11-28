@@ -1,12 +1,12 @@
 /**
- * Modale "Render Fotografico HD (Motore Studio Multi-Campione — Zero Puntini)":
- * - Sostituisce il vecchio path-tracing rumoroso con un motore fotografico progressivo ad accumulo HDR:
- *   1. Super-Sampling sub-pixel Halton (16× / 32× / 64× SSAA) per spigoli perfettamente nitidi
- *   2. Ombre d'area fisicamente morbide (disco solare + sky-fill jitterati con PCFSoftShadowMap 2048px)
- *   3. Riflessi HDR architettonici (PMREM) e luci calde interne reali per ogni stanza
- *   4. Ambient Occlusion ad alta definizione (Architectural GTAO 32 campioni + Poisson Denoise)
- *   5. Post-Processing fotografico interattivo istantaneo: AO, HDR UnrealBloom, ACES Filmic, Micro-nitidezza e Grana pellicola
- * - 100% locale e online (WebGL2 puro, zero server, zero API key, zero puntini/fireflies)
+ * Modale "Render Fotografico HD (Motore ArchViz Multi-Campione — Zero Puntini)":
+ * - Motore fotografico progressivo ad accumulo HDR pensato per realismo architettonico tipo Corona/Enscape:
+ *   1. True Hemispherical Sky GI: luce cielo con shadow map campionata su tutta la semisfera Fibonacci (32-64 direzioni)
+ *      -> occlusione direzionale reale in angoli, nicchie, infissi e sotto i mobili, ZERO puntini!
+ *   2. Luce solare dorata con shadow map 4096px + disco solare Vogel -> raggi nitidi attraverso le finestre con penombre fisiche
+ *   3. 4 Atmosfere fotografiche (Sole Architettonico, Golden Hour, Luce Nordica, Sera Calda)
+ *   4. Materiali PBR rifiniti (riflessi Fresnel clearcoat su parquet/piastrelle, sheen sui tessuti, terreno travertino procedurale, HDRI PMREM con cielo+nuvole)
+ *   5. Tone Mapping AgX Filmic + GTAO full-res + HDR Bloom + Split-Tone ArchViz + Micro-nitidezza + Grana pellicola regolabili live
  */
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
@@ -30,36 +30,183 @@ import { detectRooms } from '../utils/rooms';
 import {
   ArchitecturalGTAOPass,
   PhotographicFinishShader,
-  getPostProcessPresetConfig,
 } from '../viewer3d/postProcessing';
 import type { RenderStylePreset } from '../types/project';
 
 type QualityPreset = 'fast' | 'high' | 'ultra';
+type PhotoMood = 'archviz' | 'golden' | 'nordic' | 'evening';
 
 const QUALITY_CONFIG: Record<
   QualityPreset,
-  { label: string; samples: number; maxWidth: number; aoSamples: number; timeHint: string }
+  { label: string; samples: number; maxWidth: number; aoSamples: number; sunShadowRes: number; timeHint: string }
 > = {
   fast: {
-    label: 'Veloce (16×)',
-    samples: 16,
+    label: 'Veloce (20×)',
+    samples: 20,
     maxWidth: 1152,
     aoSamples: 20,
-    timeHint: '~1 sec • prova rapida',
+    sunShadowRes: 2048,
+    timeHint: '~1.2 sec • anteprima rapida',
   },
   high: {
-    label: 'Alta Qualità (32×)',
-    samples: 32,
+    label: 'Alta Qualità (40×)',
+    samples: 40,
     maxWidth: 1440,
     aoSamples: 28,
-    timeHint: '~2 sec • consigliato',
+    sunShadowRes: 4096,
+    timeHint: '~2.5 sec • consigliato',
   },
   ultra: {
-    label: 'Ultra HD Full (64×)',
+    label: 'Ultra HD 2K (64×)',
     samples: 64,
     maxWidth: 1920,
     aoSamples: 32,
-    timeHint: '~4 sec • stampa 2K',
+    sunShadowRes: 4096,
+    timeHint: '~4.5 sec • stampa 2K',
+  },
+};
+
+interface MoodConfig {
+  label: string;
+  desc: string;
+  elevationRad: number;
+  azimuthOffsetRad: number;
+  sunColor: string;
+  sunIntensity: number;
+  sunSpread: number;
+  skyGiColor: string;
+  skyGiIntensity: number;
+  hemiSky: string;
+  hemiGround: string;
+  hemiIntensity: number;
+  envTop: string;
+  envHorizon: string;
+  envGround: string;
+  envSunColor: string;
+  envSunPower: number;
+  envIntensity: number;
+  fogColor: string;
+  groundTint: string;
+  interiorLightMult: number;
+  bloomThreshold: number;
+  defaultBloom: number;
+  defaultExposure: number;
+  splitTone: number;
+  vignette: number;
+}
+
+const PHOTO_MOODS: Record<PhotoMood, MoodConfig> = {
+  archviz: {
+    label: 'Sole Architettonico',
+    desc: 'Luce radente calda + ombre cielo fresche',
+    elevationRad: 0.56, // ~32°: lame di sole spettacolari attraverso porte e finestre
+    azimuthOffsetRad: 0.58,
+    sunColor: '#ffe9c6',
+    sunIntensity: 2.75,
+    sunSpread: 0.042,
+    skyGiColor: '#98c4f5',
+    skyGiIntensity: 0.78,
+    hemiSky: '#c7e0fc',
+    hemiGround: '#c9a984', // Rimbalzo caldo dal pavimento
+    hemiIntensity: 0.28,
+    envTop: '#4e88cc',
+    envHorizon: '#e9eff7',
+    envGround: '#bfb29f',
+    envSunColor: '#fff1d4',
+    envSunPower: 4.5,
+    envIntensity: 0.9,
+    fogColor: '#dfe7ef',
+    groundTint: '#cfc6b8',
+    interiorLightMult: 0.85,
+    bloomThreshold: 0.95,
+    defaultBloom: 0.22,
+    defaultExposure: 1.0,
+    splitTone: 0.24,
+    vignette: 0.16,
+  },
+  golden: {
+    label: 'Golden Hour',
+    desc: 'Tramonto dorato radente + lampade accese',
+    elevationRad: 0.31, // ~18°: raggi dorati lunghi dentro le stanze
+    azimuthOffsetRad: 0.85,
+    sunColor: '#ffb86c',
+    sunIntensity: 3.1,
+    sunSpread: 0.055,
+    skyGiColor: '#7ca3de',
+    skyGiIntensity: 0.62,
+    hemiSky: '#8faed9',
+    hemiGround: '#b88356',
+    hemiIntensity: 0.24,
+    envTop: '#2b4a7a',
+    envHorizon: '#f2b179',
+    envGround: '#7a5d47',
+    envSunColor: '#ffbe70',
+    envSunPower: 6.0,
+    envIntensity: 0.85,
+    fogColor: '#dfc6b0',
+    groundTint: '#bfa994',
+    interiorLightMult: 2.1,
+    bloomThreshold: 0.84,
+    defaultBloom: 0.34,
+    defaultExposure: 0.98,
+    splitTone: 0.32,
+    vignette: 0.22,
+  },
+  nordic: {
+    label: 'Luce Nordica',
+    desc: 'Cielo diffuso morbido stile editoriale',
+    elevationRad: 0.72,
+    azimuthOffsetRad: 0.42,
+    sunColor: '#fff8ee',
+    sunIntensity: 1.45,
+    sunSpread: 0.19, // Sole molto diffuso tra nuvole leggere
+    skyGiColor: '#d9e7f5',
+    skyGiIntensity: 1.15,
+    hemiSky: '#eef4fa',
+    hemiGround: '#c4b8a8',
+    hemiIntensity: 0.34,
+    envTop: '#9fb4c9',
+    envHorizon: '#edf1f5',
+    envGround: '#c4beb6',
+    envSunColor: '#ffffff',
+    envSunPower: 2.0,
+    envIntensity: 0.95,
+    fogColor: '#e6ebf0',
+    groundTint: '#d6d2cb',
+    interiorLightMult: 0.75,
+    bloomThreshold: 1.0,
+    defaultBloom: 0.14,
+    defaultExposure: 1.02,
+    splitTone: 0.14,
+    vignette: 0.11,
+  },
+  evening: {
+    label: 'Sera / Interni',
+    desc: 'Crepuscolo blu + atmosfera calda interna',
+    elevationRad: 0.26,
+    azimuthOffsetRad: -0.75,
+    sunColor: '#7ea2d9',
+    sunIntensity: 0.65,
+    sunSpread: 0.14,
+    skyGiColor: '#4e73b0',
+    skyGiIntensity: 0.52,
+    hemiSky: '#3b588c',
+    hemiGround: '#4a3a2d',
+    hemiIntensity: 0.2,
+    envTop: '#0d1930',
+    envHorizon: '#2e456e',
+    envGround: '#1a1d24',
+    envSunColor: '#f29a5e',
+    envSunPower: 2.6,
+    envIntensity: 0.6,
+    fogColor: '#1a2538',
+    groundTint: '#363d4a',
+    interiorLightMult: 4.4,
+    bloomThreshold: 0.74,
+    defaultBloom: 0.42,
+    defaultExposure: 1.04,
+    splitTone: 0.28,
+    vignette: 0.26,
   },
 };
 
@@ -70,7 +217,7 @@ interface PathTracerRenderModalProps {
   onSendToAiPhoto?: (dataUrl: string) => void;
 }
 
-/** Sequenza Halton a bassa discrepanza per SSAA sub-pixel senza pattern */
+/** Sequenza Halton a bassa discrepanza per SSAA sub-pixel */
 function halton(index: number, base: number): number {
   let f = 1;
   let r = 0;
@@ -83,7 +230,7 @@ function halton(index: number, base: number): number {
   return r;
 }
 
-/** Disco di Vogel per campionamento uniforme del disco solare / cielo (ombre d'area soffici senza banding) */
+/** Disco di Vogel uniforme per penombre solari naturali senza banding */
 function vogelDisk(sampleIndex: number, totalSamples: number): [number, number] {
   const goldenAngle = 2.399963229728653;
   const r = Math.sqrt((sampleIndex + 0.5) / Math.max(1, totalSamples));
@@ -91,45 +238,44 @@ function vogelDisk(sampleIndex: number, totalSamples: number): [number, number] 
   return [r * Math.cos(theta), r * Math.sin(theta)];
 }
 
-/** Calcola direzione e colore del sole dall'ora del giorno (coerente con Scene3D) */
-function computeSunParams(hour: number, preset: RenderStylePreset) {
-  const effectiveHour = preset === 'evening' ? 19.35 : hour;
-  const t = Math.max(0, Math.min(1, (effectiveHour - 6) / 14));
-  const elevation = Math.sin(t * Math.PI) * 1.15 + 0.16;
-  const azimuth = (t - 0.5) * Math.PI * 1.25;
-  const dir = new THREE.Vector3(
+/**
+ * Direzione campionata uniformemente sulla semisfera superiore (Fibonacci Cosine-Weighted):
+ * permette di accumulare vero Sky Dome GI con ombre morbide a 360° in tutti gli angoli!
+ */
+function fibonacciHemisphereDir(sampleIndex: number, totalSamples: number, out: THREE.Vector3): THREE.Vector3 {
+  const goldenAngle = 2.399963229728653;
+  const u = (sampleIndex + 0.5) / Math.max(1, totalSamples);
+  // Elevazione minima ~14° (sin >= 0.24) per luce naturale dal cielo senza artefatti radenti dal terreno
+  const y = 0.24 + (1.0 - 0.24) * Math.sqrt(u);
+  const rad = Math.sqrt(Math.max(0, 1.0 - y * y));
+  const theta = sampleIndex * goldenAngle;
+  return out.set(Math.cos(theta) * rad, y, Math.sin(theta) * rad).normalize();
+}
+
+/** Calcola la direzione del sole combinando l'ora del giorno dello Step 3 con l'elevazione fotografica del mood */
+function computeArchVizSunDirection(hour: number, mood: MoodConfig): THREE.Vector3 {
+  const t = Math.max(0, Math.min(1, (hour - 6) / 14));
+  const userAzimuth = (t - 0.5) * Math.PI * 1.25;
+  const azimuth = userAzimuth + mood.azimuthOffsetRad;
+  // Blend morbido tra l'angolo fotografico ideale del mood e l'ora del giorno dell'utente
+  const userElev = Math.sin(t * Math.PI) * 0.65 + 0.24;
+  const elevation = mood.elevationRad * 0.72 + userElev * 0.28;
+  return new THREE.Vector3(
     Math.sin(azimuth) * Math.cos(elevation),
     Math.sin(elevation),
     Math.cos(azimuth) * Math.cos(elevation)
   ).normalize();
-
-  const warmth = 1 - Math.sin(t * Math.PI);
-  const sunColor =
-    preset === 'studio'
-      ? new THREE.Color('#fffcf7')
-      : preset === 'evening'
-        ? new THREE.Color('#ffad66')
-        : new THREE.Color().setRGB(1, 1 - warmth * 0.24, 1 - warmth * 0.48);
-
-  const baseSunIntensity =
-    preset === 'evening'
-      ? 1.15
-      : preset === 'studio'
-        ? 1.75
-        : (0.85 + Math.sin(t * Math.PI) * 1.35) * 1.3;
-
-  return { dir, sunColor, baseSunIntensity, warmth };
 }
 
-/** Crea un WebGLRenderer WebGL2 sicuro evitando switch GPU ANGLE */
+/** Crea un WebGLRenderer WebGL2 con preserveDrawingBuffer=true per non perdere mai il frame al 100% */
 function createSafeWebGLRenderer(): THREE.WebGLRenderer {
   const canvas = document.createElement('canvas');
   const contextAttrs: WebGLContextAttributes = {
     alpha: false,
-    antialias: false, // Super-sampling Halton 16x-64x nativo
+    antialias: false,
     depth: true,
     stencil: false,
-    preserveDrawingBuffer: false,
+    preserveDrawingBuffer: true,
     powerPreference: 'default',
     failIfMajorPerformanceCaveat: false,
   };
@@ -149,7 +295,7 @@ function createSafeWebGLRenderer(): THREE.WebGLRenderer {
     context: gl,
     antialias: false,
     alpha: false,
-    preserveDrawingBuffer: false,
+    preserveDrawingBuffer: true,
     powerPreference: 'default',
   });
 }
@@ -176,114 +322,191 @@ function cloneTextureForRenderer(
   return cloned;
 }
 
-/** Genera una Environment Map HDR architettonica (PMREM) 100% procedurale per riflessi fotografici */
-function createArchitecturalEnvironment(
+/** Genera una micro-texture procedurale in travertino/pietra architettonica per il piano esterno */
+function createArchitecturalGroundTextures(tintHex: string): {
+  map: THREE.CanvasTexture;
+  roughnessMap: THREE.CanvasTexture;
+} {
+  const size = 512;
+  const diffCanvas = document.createElement('canvas');
+  const roughCanvas = document.createElement('canvas');
+  diffCanvas.width = roughCanvas.width = size;
+  diffCanvas.height = roughCanvas.height = size;
+
+  const ctx = diffCanvas.getContext('2d')!;
+  const rCtx = roughCanvas.getContext('2d')!;
+
+  const base = new THREE.Color(tintHex);
+  const br = Math.round(base.r * 255);
+  const bg = Math.round(base.g * 255);
+  const bb = Math.round(base.b * 255);
+
+  ctx.fillStyle = `rgb(${br},${bg},${bb})`;
+  ctx.fillRect(0, 0, size, size);
+  rCtx.fillStyle = 'rgb(228,228,228)';
+  rCtx.fillRect(0, 0, size, size);
+
+  // Grana minerale fine deterministica + lievi variazioni di tono architettonico
+  let seed = 13379;
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+
+  for (let i = 0; i < 4800; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const rad = 1 + rand() * 3.5;
+    const delta = (rand() - 0.5) * 16;
+    ctx.fillStyle = `rgba(${Math.max(0, Math.min(255, Math.round(br + delta)))},${Math.max(0, Math.min(255, Math.round(bg + delta)))},${Math.max(0, Math.min(255, Math.round(bb + delta)))},0.28)`;
+    ctx.fillRect(x, y, rad, rad);
+
+    const rv = Math.max(195, Math.min(250, Math.round(225 + delta * 1.4)));
+    rCtx.fillStyle = `rgba(${rv},${rv},${rv},0.35)`;
+    rCtx.fillRect(x, y, rad * 1.2, rad * 1.2);
+  }
+
+  // Giunti larghi molto discreti tipo pavimentazione esterna in pietra/cemento architettonico
+  ctx.strokeStyle = `rgba(${Math.max(0, br - 28)},${Math.max(0, bg - 28)},${Math.max(0, bb - 28)},0.22)`;
+  ctx.lineWidth = 1.5;
+  for (let p = 0; p < size; p += 128) {
+    ctx.beginPath();
+    ctx.moveTo(p, 0);
+    ctx.lineTo(p, size);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, p);
+    ctx.lineTo(size, p);
+    ctx.stroke();
+  }
+
+  const map = new THREE.CanvasTexture(diffCanvas);
+  map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  map.repeat.set(34, 34);
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.anisotropy = 8;
+
+  const roughnessMap = new THREE.CanvasTexture(roughCanvas);
+  roughnessMap.wrapS = roughnessMap.wrapT = THREE.RepeatWrapping;
+  roughnessMap.repeat.set(34, 34);
+  roughnessMap.anisotropy = 4;
+
+  return { map, roughnessMap };
+}
+
+/**
+ * Genera una HDRI PMREM procedurale fotorealistica (cielo fisico + nuvole soffici + corona solare + orizzonte caldo)
+ * per riflessi verosimili su vetri, parquet, gres, marmo e rubinetteria cromata.
+ */
+function createPhotorealisticEnvironment(
   renderer: THREE.WebGLRenderer,
-  preset: RenderStylePreset
+  mood: MoodConfig,
+  sunDir: THREE.Vector3
 ): THREE.WebGLRenderTarget {
   const pmrem = new THREE.PMREMGenerator(renderer);
   pmrem.compileEquirectangularShader();
 
   const envScene = new THREE.Scene();
-  const isEvening = preset === 'evening';
-  const isStudio = preset === 'studio';
 
-  envScene.background = new THREE.Color(
-    isEvening ? '#151e30' : isStudio ? '#e9eef4' : '#cfe2f5'
-  );
+  const domeGeo = new THREE.SphereGeometry(40, 48, 24);
+  const domeMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    uniforms: {
+      topColor: { value: new THREE.Color(mood.envTop) },
+      horizonColor: { value: new THREE.Color(mood.envHorizon) },
+      groundColor: { value: new THREE.Color(mood.envGround) },
+      sunDir: { value: sunDir.clone() },
+      sunColor: { value: new THREE.Color(mood.envSunColor) },
+      sunPower: { value: mood.envSunPower },
+      envScale: { value: mood.envIntensity },
+    },
+    vertexShader: /* glsl */ `
+      varying vec3 vDir;
+      void main() {
+        vDir = normalize(position);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform vec3 topColor;
+      uniform vec3 horizonColor;
+      uniform vec3 groundColor;
+      uniform vec3 sunDir;
+      uniform vec3 sunColor;
+      uniform float sunPower;
+      uniform float envScale;
+      varying vec3 vDir;
 
-  const addPanel = (
-    color: string,
-    intensity: number,
-    pos: [number, number, number],
-    rot: [number, number, number],
-    scale: [number, number]
-  ) => {
-    const col = new THREE.Color(color).multiplyScalar(intensity);
-    const mat = new THREE.MeshBasicMaterial({ color: col, side: THREE.DoubleSide });
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(scale[0], scale[1]), mat);
-    mesh.position.set(pos[0], pos[1], pos[2]);
-    mesh.rotation.set(rot[0], rot[1], rot[2]);
-    envScene.add(mesh);
-  };
+      float hash(vec2 p) {
+        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+      }
+      float noise(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        f = f * f * (3.0 - 2.0 * f);
+        return mix(
+          mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x),
+          mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x),
+          f.y
+        );
+      }
+      float fbm(vec2 p) {
+        float v = 0.0;
+        float a = 0.5;
+        for (int i = 0; i < 4; i++) {
+          v += a * noise(p);
+          p *= 2.04;
+          a *= 0.5;
+        }
+        return v;
+      }
 
-  // Cupola zenitale soffusa
-  addPanel(
-    isEvening ? '#4b6496' : isStudio ? '#ffffff' : '#f2f7ff',
-    isEvening ? 0.85 : isStudio ? 2.6 : 2.1,
-    [0, 14, 0],
-    [Math.PI / 2, 0, 0],
-    [28, 28]
-  );
-  // Disco / pannello solare caldo per highlight speculari naturali su metalli e vetri
-  addPanel(
-    isEvening ? '#ff9d57' : '#fff5e0',
-    isEvening ? 3.8 : isStudio ? 2.4 : 4.2,
-    [13, isEvening ? 4.5 : 10, 11],
-    [0, -Math.PI / 4, 0],
-    [6.5, 6.5]
-  );
-  // Finestra cielo laterale fredda
-  addPanel(
-    isEvening ? '#5b7290' : '#d2e8ff',
-    isEvening ? 0.9 : 1.75,
-    [-14, 5, 9],
-    [0, Math.PI / 3, 0],
-    [16, 8]
-  );
-  // Rimbalzo parete calda opposta
-  addPanel(
-    isEvening ? '#ffbe78' : '#f5eadb',
-    isEvening ? 1.45 : 1.15,
-    [9, 3.5, -13],
-    [0, -Math.PI / 5, 0],
-    [16, 7]
-  );
-  // Rimbalzo pavimento morbido
-  addPanel('#cfc3b2', isEvening ? 0.35 : 0.65, [0, -7, 0], [-Math.PI / 2, 0, 0], [26, 26]);
-
-  const envRT = pmrem.fromScene(envScene, 0.035);
-
-  envScene.traverse((o) => {
-    const m = o as THREE.Mesh;
-    if (m.isMesh) {
-      m.geometry?.dispose();
-      (m.material as THREE.Material)?.dispose();
-    }
+      void main() {
+        vec3 d = normalize(vDir);
+        float h = d.y;
+        vec3 col;
+        if (h >= 0.0) {
+          col = mix(horizonColor, topColor, pow(clamp(h, 0.0, 1.0), 0.55));
+          // Nuvole morbide procedurali per riflessi naturali su vetri e metalli
+          vec2 cloudUv = d.xz / (h + 0.35) * 1.4;
+          float c = smoothstep(0.46, 0.78, fbm(cloudUv));
+          col = mix(col, horizonColor * 1.22, c * smoothstep(0.02, 0.25, h) * 0.45);
+          // Corona solare HDR
+          float sDot = max(0.0, dot(d, normalize(sunDir)));
+          col += sunColor * (pow(sDot, 160.0) * sunPower * 2.2 + pow(sDot, 14.0) * sunPower * 0.22);
+        } else {
+          col = mix(horizonColor * 0.85, groundColor, clamp(-h * 2.6, 0.0, 1.0));
+        }
+        gl_FragColor = vec4(col * envScale, 1.0);
+      }
+    `,
   });
+  const dome = new THREE.Mesh(domeGeo, domeMat);
+  envScene.add(dome);
+
+  const envRT = pmrem.fromScene(envScene, 0.025);
+  domeGeo.dispose();
+  domeMat.dispose();
   pmrem.dispose();
   return envRT;
 }
 
-/** Cupola cielo sfumata di sfondo (ignorata dal GTAO grazie a ShaderMaterial + depthWrite=false) */
+/** Cupola cielo atmosferica di sfondo (ignorata da GTAO grazie a ShaderMaterial + depthWrite=false) */
 function createSkyBackdropDome(
-  preset: RenderStylePreset,
+  mood: MoodConfig,
   sunDir: THREE.Vector3
 ): { mesh: THREE.Mesh; dispose: () => void } {
-  const isEvening = preset === 'evening';
-  const isStudio = preset === 'studio';
-  const isSketch = preset === 'sketch';
-
-  const topCol = new THREE.Color(
-    isEvening ? '#0f172a' : isStudio ? '#e2e8f0' : isSketch ? '#f5efe4' : '#7cb5e8'
-  );
-  const horizonCol = new THREE.Color(
-    isEvening ? '#d97b48' : isStudio ? '#f8fafc' : isSketch ? '#fbf8f2' : '#eef4fa'
-  );
-  const groundCol = new THREE.Color(
-    isEvening ? '#1e2533' : isStudio ? '#d8dee6' : isSketch ? '#eae2d3' : '#d8d2c6'
-  );
-
-  const geo = new THREE.SphereGeometry(95, 32, 20);
+  const geo = new THREE.SphereGeometry(110, 48, 24);
   const mat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
     uniforms: {
-      topColor: { value: topCol },
-      horizonColor: { value: horizonCol },
-      groundColor: { value: groundCol },
+      topColor: { value: new THREE.Color(mood.envTop) },
+      horizonColor: { value: new THREE.Color(mood.envHorizon) },
+      groundColor: { value: new THREE.Color(mood.fogColor) },
       sunDir: { value: sunDir.clone() },
-      sunGlow: { value: isStudio || isSketch ? 0.0 : isEvening ? 0.65 : 0.35 },
+      sunColor: { value: new THREE.Color(mood.envSunColor) },
+      sunGlow: { value: mood.envSunPower * 0.085 },
     },
     vertexShader: /* glsl */ `
       varying vec3 vWorldDir;
@@ -298,17 +521,38 @@ function createSkyBackdropDome(
       uniform vec3 horizonColor;
       uniform vec3 groundColor;
       uniform vec3 sunDir;
+      uniform vec3 sunColor;
       uniform float sunGlow;
       varying vec3 vWorldDir;
+
+      float hash(vec2 p) {
+        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+      }
+      float noise(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        f = f * f * (3.0 - 2.0 * f);
+        return mix(
+          mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x),
+          mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x),
+          f.y
+        );
+      }
+
       void main() {
         vec3 d = normalize(vWorldDir);
         float h = d.y;
-        vec3 col = h >= 0.0
-          ? mix(horizonColor, topColor, pow(clamp(h, 0.0, 1.0), 0.58))
-          : mix(horizonColor, groundColor, clamp(-h * 3.0, 0.0, 1.0));
-        if (sunGlow > 0.001) {
+        vec3 col;
+        if (h >= 0.0) {
+          col = mix(horizonColor, topColor, pow(clamp(h, 0.0, 1.0), 0.52));
+          vec2 cuv = d.xz / (h + 0.4) * 1.1;
+          float n = noise(cuv) * 0.65 + noise(cuv * 2.3) * 0.35;
+          float cloud = smoothstep(0.52, 0.82, n) * smoothstep(0.04, 0.35, h);
+          col = mix(col, mix(horizonColor, vec3(1.0), 0.55), cloud * 0.35);
           float sunDot = max(0.0, dot(d, normalize(sunDir)));
-          col += vec3(1.0, 0.9, 0.72) * pow(sunDot, 24.0) * sunGlow;
+          col += sunColor * (pow(sunDot, 28.0) * sunGlow + pow(sunDot, 220.0) * sunGlow * 2.5);
+        } else {
+          col = mix(horizonColor, groundColor, clamp(-h * 4.0, 0.0, 1.0));
         }
         gl_FragColor = vec4(col, 1.0);
       }
@@ -328,12 +572,15 @@ function createSkyBackdropDome(
 }
 
 /**
- * Clona fedelmente tutta la scena 3D corrente con materiali PBR di qualità fotografica
- * (preservando map, bumpMap, roughnessMap, clearcoat, vetri fisici e geometrie esatte).
+ * Clona fedelmente la scena 3D potenziando i materiali PBR per il massimo realismo fotografico:
+ * - Pavimenti (parquet/piastrelle) con riflesso satinato clearcoat Fresnel
+ * - Tessuti (divani/letti/tappeti) con sheen vellutato morbido
+ * - Intonaco pareti calibrato per esaltare luce radente e ombre morbide
+ * - Piano esterno in travertino/cemento architettonico procedurale che sfuma nella foschia d'orizzonte
  */
-function buildPhotographicStudioScene(
+function buildPhotorealisticScene(
   sourceGroup: THREE.Group,
-  preset: RenderStylePreset
+  mood: MoodConfig
 ): {
   scene: THREE.Scene;
   sceneRadius: number;
@@ -343,7 +590,8 @@ function buildPhotographicStudioScene(
   const studioScene = new THREE.Scene();
   const disposables: Array<{ dispose: () => void }> = [];
   const texCache = new Map<THREE.Texture, THREE.Texture>();
-  const isEvening = preset === 'evening';
+  const groundTex = createArchitecturalGroundTextures(mood.groundTint);
+  disposables.push(groundTex.map, groundTex.roughnessMap);
 
   sourceGroup.updateMatrixWorld(true);
   const worldPos = new THREE.Vector3();
@@ -362,7 +610,6 @@ function buildPhotographicStudioScene(
       | THREE.Material
       | THREE.Material[];
     if (Array.isArray(rawMat)) return;
-    // Salta tracce fantasma muri abbattuti
     if (rawMat.transparent && rawMat.opacity < 0.22) return;
 
     const srcGeo = mesh.geometry;
@@ -388,60 +635,89 @@ function buildPhotographicStudioScene(
       srcGeo.getAttribute('position').count <= 6 &&
       mesh.position.y < -0.05;
 
+    mesh.matrixWorld.decompose(worldPos, worldQuat, worldScale);
+
+    // Rileva la soletta pavimento interna (box piatto intorno a y = -0.02 con texture PBR)
+    const isFloorSlab =
+      !isGroundPlane &&
+      !isGlass &&
+      Boolean(std.map && std.roughnessMap) &&
+      Math.abs(worldPos.y + 0.02) < 0.06;
+
     let mat: THREE.Material;
     if (isGlass) {
       mat = new THREE.MeshPhysicalMaterial({
-        color: new THREE.Color('#d8eef9'),
+        color: new THREE.Color('#cce7f7'),
         transparent: true,
-        opacity: 0.26,
-        roughness: 0.04,
-        metalness: 0.05,
+        opacity: 0.24,
+        roughness: 0.03,
+        metalness: 0.06,
         clearcoat: 1.0,
-        clearcoatRoughness: 0.03,
-        ior: 1.5,
-        reflectivity: 0.96,
-        envMapIntensity: 1.85,
+        clearcoatRoughness: 0.02,
+        ior: 1.52,
+        reflectivity: 0.98,
+        envMapIntensity: 2.2,
         depthWrite: false,
       });
+    } else if (isGroundPlane) {
+      mat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color('#ffffff'),
+        map: groundTex.map,
+        roughnessMap: groundTex.roughnessMap,
+        roughness: 0.95,
+        metalness: 0.0,
+        envMapIntensity: 0.22,
+      });
     } else {
-      const clonedMap = isGroundPlane
-        ? null
-        : cloneTextureForRenderer(std.map, texCache, disposables);
-      const clonedBump = isGroundPlane
-        ? null
-        : cloneTextureForRenderer(std.bumpMap, texCache, disposables);
-      const clonedRough = isGroundPlane
-        ? null
-        : cloneTextureForRenderer(std.roughnessMap, texCache, disposables);
-      const clonedNormal = isGroundPlane
-        ? null
-        : cloneTextureForRenderer(std.normalMap, texCache, disposables);
+      const clonedMap = cloneTextureForRenderer(std.map, texCache, disposables);
+      const clonedBump = cloneTextureForRenderer(std.bumpMap, texCache, disposables);
+      const clonedRough = cloneTextureForRenderer(std.roughnessMap, texCache, disposables);
+      const clonedNormal = cloneTextureForRenderer(std.normalMap, texCache, disposables);
 
-      const baseCol = isGroundPlane
-        ? new THREE.Color(isEvening ? '#242e3f' : preset === 'studio' ? '#e4e8ee' : '#dcd6cb')
-        : std.color
-          ? std.color.clone()
-          : new THREE.Color('#e2e8f0');
+      const baseCol = std.color ? std.color.clone() : new THREE.Color('#e2e8f0');
+      const matRoughness = clonedRough ? 1.0 : std.roughness ?? 0.65;
+      const matMetalness = std.metalness ?? 0.02;
+      const isMattePlaster = !clonedMap && matRoughness >= 0.85 && matMetalness < 0.05;
+      const isFabricLike = !isFloorSlab && matRoughness >= 0.8 && matMetalness < 0.04 && !isMattePlaster;
+
+      // Rifinitura ottica per realismo fotografico:
+      // - Pavimenti: strato clearcoat satinato per riflessi naturali di cielo e finestre
+      // - Tessuti: sheen morbido sui profili di divani, letti e cuscini
+      // - Metalli: envMapIntensity più ricco per riflessi croccanti
+      const clearcoat = isFloorSlab
+        ? Math.max(std.clearcoat ?? 0, 0.36)
+        : std.clearcoat ?? (matRoughness < 0.35 && matMetalness < 0.2 ? 0.28 : 0);
+      const clearcoatRoughness = isFloorSlab
+        ? 0.22
+        : std.clearcoatRoughness ?? 0.12;
 
       mat = new THREE.MeshPhysicalMaterial({
         color: baseCol,
         map: clonedMap,
         bumpMap: clonedBump,
-        bumpScale: std.bumpScale ?? 0.008,
+        bumpScale: isMattePlaster ? (std.bumpScale ?? 0.006) * 1.35 : std.bumpScale ?? 0.008,
         roughnessMap: clonedRough,
         normalMap: clonedNormal,
-        roughness: isGroundPlane ? 0.94 : clonedRough ? 1.0 : std.roughness ?? 0.65,
-        metalness: std.metalness ?? 0.02,
-        clearcoat: std.clearcoat ?? 0,
-        clearcoatRoughness: std.clearcoatRoughness ?? 0.08,
-        envMapIntensity: isGroundPlane ? 0.45 : std.envMapIntensity ?? 1.0,
+        roughness: matRoughness,
+        metalness: matMetalness,
+        clearcoat,
+        clearcoatRoughness,
+        sheen: isFabricLike ? 0.55 : 0,
+        sheenRoughness: isFabricLike ? 0.72 : 1.0,
+        sheenColor: isFabricLike ? baseCol.clone().lerp(new THREE.Color('#ffffff'), 0.45) : new THREE.Color('#000000'),
+        envMapIntensity: isMattePlaster
+          ? 0.32
+          : isFloorSlab
+            ? 1.15
+            : matMetalness > 0.4
+              ? 1.55
+              : std.envMapIntensity ?? 0.9,
         emissive: std.emissive ? std.emissive.clone() : new THREE.Color('#000000'),
         emissiveIntensity: std.emissiveIntensity ?? 0,
       });
     }
     disposables.push(mat);
 
-    mesh.matrixWorld.decompose(worldPos, worldQuat, worldScale);
     const clonedMesh = new THREE.Mesh(geo, mat);
     clonedMesh.position.copy(worldPos);
     clonedMesh.quaternion.copy(worldQuat);
@@ -463,13 +739,13 @@ function buildPhotographicStudioScene(
     const size = new THREE.Vector3();
     bbox.getCenter(sceneCenter);
     bbox.getSize(size);
-    sceneRadius = Math.max(4.0, Math.hypot(size.x, size.z) * 0.55);
+    sceneRadius = Math.max(3.6, Math.hypot(size.x, size.z) * 0.55);
   }
 
   return { scene: studioScene, sceneRadius, sceneCenter, disposables };
 }
 
-/** Shader per media progressiva HDR in virgola mobile (accumulo SSAA + ombre d'area soffici) */
+/** Shader per media progressiva HDR in virgola mobile (accumulo SSAA + Sky GI + ombre d'area) */
 function createAccumulateMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     depthTest: false,
@@ -505,7 +781,7 @@ function createAccumulateMaterial(): THREE.ShaderMaterial {
   });
 }
 
-/** Shader che fonde l'AO ad alta definizione nel buffer HDR lineare prima del Bloom e di ACES */
+/** Shader che fonde l'AO ad alta definizione nel buffer HDR lineare prima del Bloom e di AgX */
 function createAoCompositeMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     depthTest: false,
@@ -514,7 +790,7 @@ function createAoCompositeMaterial(): THREE.ShaderMaterial {
     uniforms: {
       tBeauty: { value: null as THREE.Texture | null },
       tAo: { value: null as THREE.Texture | null },
-      aoStrength: { value: 0.9 },
+      aoStrength: { value: 1.0 },
     },
     vertexShader: /* glsl */ `
       varying vec2 vUv;
@@ -531,13 +807,20 @@ function createAoCompositeMaterial(): THREE.ShaderMaterial {
       void main() {
         vec4 beauty = texture2D(tBeauty, vUv);
         float ao = texture2D(tAo, vUv).r;
-        // Curva morbida sull'AO per ombre profonde ma naturali negli spigoli
-        float shapedAo = pow(clamp(ao, 0.0, 1.0), 1.0 + aoStrength * 0.45);
-        float factor = mix(1.0, shapedAo, clamp(aoStrength, 0.0, 1.35));
-        gl_FragColor = vec4(beauty.rgb * factor, 1.0);
+        // Multi-bounce AO approximation: mantiene calore naturale nelle ombre invece di annerire i colori
+        float shapedAo = pow(clamp(ao, 0.0, 1.0), 1.0 + aoStrength * 0.4);
+        vec3 bounceTint = mix(vec3(0.88, 0.89, 0.94), vec3(1.0), shapedAo);
+        vec3 aoColor = mix(vec3(1.0), vec3(shapedAo) * bounceTint, clamp(aoStrength, 0.0, 1.35));
+        gl_FragColor = vec4(beauty.rgb * aoColor, 1.0);
       }
     `,
   });
+}
+
+function defaultMoodFromPreset(preset: RenderStylePreset): PhotoMood {
+  if (preset === 'evening') return 'evening';
+  if (preset === 'studio') return 'nordic';
+  return 'archviz';
 }
 
 export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
@@ -548,20 +831,19 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
 }) => {
   const { project, selectedRoomId3D, showToast } = useProjectStore();
   const preset: RenderStylePreset = project.renderSettings.renderPreset ?? 'realistic';
-  const presetFx = getPostProcessPresetConfig(preset);
 
   const canvasHostRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const renderPostProcessRef = useRef<(() => void) | null>(null);
 
+  const initialMood = defaultMoodFromPreset(preset);
+  const [mood, setMood] = useState<PhotoMood>(initialMood);
   const [quality, setQuality] = useState<QualityPreset>('high');
   const [hasStarted, setHasStarted] = useState(false);
-  const [aoStrength, setAoStrength] = useState(0.95);
-  const [bloomStrength, setBloomStrength] = useState(
-    Number(Math.max(0.16, presetFx.bloomStrength).toFixed(2))
-  );
-  const [grainStrength, setGrainStrength] = useState(0.02);
-  const [exposure, setExposure] = useState(1.08);
+  const [aoStrength, setAoStrength] = useState(1.0);
+  const [bloomStrength, setBloomStrength] = useState(PHOTO_MOODS[initialMood].defaultBloom);
+  const [grainStrength, setGrainStrength] = useState(0.018);
+  const [exposure, setExposure] = useState(PHOTO_MOODS[initialMood].defaultExposure);
   const [sunStrength, setSunStrength] = useState(1.05);
   const [isPaused, setIsPaused] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
@@ -583,6 +865,12 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
   const sunStrengthRef = useRef(sunStrength);
   sunStrengthRef.current = sunStrength;
 
+  const handleSelectMood = (nextMood: PhotoMood) => {
+    setMood(nextMood);
+    setBloomStrength(PHOTO_MOODS[nextMood].defaultBloom);
+    setExposure(PHOTO_MOODS[nextMood].defaultExposure);
+  };
+
   // Aggiorna AO, Bloom, Grana e Luminosità ISTANTANEAMENTE sul risultato accumulato
   useEffect(() => {
     const r = rendererRef.current;
@@ -592,7 +880,7 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
     renderPostProcessRef.current?.();
   }, [aoStrength, bloomStrength, grainStrength, exposure]);
 
-  // Effetto principale: costruisce la scena Studio, calcola GTAO HD e accumula 16x/32x/64x frame HDR
+  // Effetto principale: costruisce la scena ArchViz, calcola GTAO HD e accumula Sky GI + Sun Penumbra + SSAA
   useEffect(() => {
     const host = canvasHostRef.current;
     if (!host || !hasStarted) return;
@@ -605,6 +893,7 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
 
     const start = async () => {
       const qCfg = QUALITY_CONFIG[quality];
+      const moodCfg = PHOTO_MOODS[mood];
       setTargetSamples(qCfg.samples);
       setIsInitializing(true);
       setErrorMsg(null);
@@ -625,14 +914,16 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
         renderer.setPixelRatio(1);
         renderer.setSize(outW, outH, false);
         renderer.outputColorSpace = THREE.SRGBColorSpace;
-        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMapping = THREE.AgXToneMapping;
         renderer.toneMappingExposure = exposureRef.current;
         renderer.shadowMap.enabled = true;
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-        renderer.domElement.style.width = '100%';
-        renderer.domElement.style.height = '100%';
-        renderer.domElement.style.objectFit = 'contain';
+        renderer.domElement.style.maxWidth = '100%';
+        renderer.domElement.style.maxHeight = '100%';
+        renderer.domElement.style.width = 'auto';
+        renderer.domElement.style.height = 'auto';
         renderer.domElement.style.display = 'block';
+        renderer.domElement.style.borderRadius = '0.5rem';
 
         onContextLost = (ev: Event) => {
           ev.preventDefault();
@@ -648,8 +939,8 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
         host.appendChild(renderer.domElement);
         rendererRef.current = renderer;
 
-        // 1. Clona fedelmente la scena 3D con texture PBR e materiali fisici
-        const built = buildPhotographicStudioScene(sourceGroup, preset);
+        // 1. Clona fedelmente la scena 3D con materiali PBR potenziati (clearcoat pavimenti, sheen tessuti, terreno pietra)
+        const built = buildPhotorealisticScene(sourceGroup, moodCfg);
         const studioScene = built.scene;
         cleanupList.push(() => {
           for (const d of built.disposables) {
@@ -661,77 +952,81 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
           }
         });
 
-        const sunInfo = computeSunParams(project.renderSettings.timeOfDay, preset);
+        const sunDir = computeArchVizSunDirection(project.renderSettings.timeOfDay, moodCfg);
 
-        // 2. Environment Map HDR (PMREM) + Cupola cielo sfumata
-        const envRT = createArchitecturalEnvironment(renderer, preset);
+        // Foschia atmosferica morbida all'orizzonte per fondere il piano esterno col cielo
+        studioScene.fog = new THREE.Fog(
+          moodCfg.fogColor,
+          Math.max(18, built.sceneRadius * 2.4),
+          Math.max(58, built.sceneRadius * 6.5)
+        );
+
+        // 2. HDRI PMREM procedurale (cielo + nuvole + corona solare) + Cupola cielo atmosferica
+        const envRT = createPhotorealisticEnvironment(renderer, moodCfg, sunDir);
         studioScene.environment = envRT.texture;
         cleanupList.push(() => envRT.dispose());
 
-        const skyDome = createSkyBackdropDome(preset, sunInfo.dir);
+        const skyDome = createSkyBackdropDome(moodCfg, sunDir);
         studioScene.add(skyDome.mesh);
         cleanupList.push(() => skyDome.dispose());
 
-        // 3. Illuminazione Studio Multi-Sorgente con Ombre d'Area Soft
-        const isEvening = preset === 'evening';
-        const isStudio = preset === 'studio';
-        const shadowHalf = Math.min(20, Math.max(5.5, built.sceneRadius * 1.12));
+        // 3. Rig di Illuminazione ArchViz (Sole 4K + Hemispherical Fibonacci Sky GI + Bounce + Luci Interne)
+        const shadowHalf = Math.min(18, Math.max(4.5, built.sceneRadius * 1.18));
+        const sunDist = Math.max(18, built.sceneRadius * 2.6);
+        const maxTex = renderer.capabilities.maxTextureSize;
+        const sunShadowRes = Math.min(qCfg.sunShadowRes, maxTex >= 4096 ? 4096 : 2048);
 
-        // Emisferica bilanciata (cielo + rimbalzo caldo dal pavimento)
+        // Emisferica delicata (cielo zenitale + rimbalzo caldo del pavimento sulle pareti)
         const hemi = new THREE.HemisphereLight(
-          isEvening ? '#8fb8f0' : isStudio ? '#ffffff' : '#f2f7ff',
-          isEvening ? '#524135' : '#c9b7a0',
-          isEvening ? 0.42 : isStudio ? 0.92 : 0.68
+          moodCfg.hemiSky,
+          moodCfg.hemiGround,
+          moodCfg.hemiIntensity
         );
         studioScene.add(hemi);
 
-        // Sole direzionale principale con ombre 2048px (jitterato sul disco solare per penombre fisiche)
-        const sunDist = Math.max(18, built.sceneRadius * 2.4);
+        // Sole Direzionale Principale (4096px PCFSoftShadowMap, disco Vogel per penombre fisiche)
         const sunLight = new THREE.DirectionalLight(
-          sunInfo.sunColor,
-          sunInfo.baseSunIntensity * sunStrengthRef.current
+          moodCfg.sunColor,
+          moodCfg.sunIntensity * sunStrengthRef.current
         );
         sunLight.castShadow = true;
-        sunLight.shadow.mapSize.set(2048, 2048);
+        sunLight.shadow.mapSize.set(sunShadowRes, sunShadowRes);
         sunLight.shadow.camera.near = 1;
-        sunLight.shadow.camera.far = sunDist * 2.4;
+        sunLight.shadow.camera.far = sunDist * 2.5;
         sunLight.shadow.camera.left = -shadowHalf;
         sunLight.shadow.camera.right = shadowHalf;
         sunLight.shadow.camera.top = shadowHalf;
         sunLight.shadow.camera.bottom = -shadowHalf;
-        sunLight.shadow.bias = -0.0002;
-        sunLight.shadow.normalBias = 0.022;
-        sunLight.shadow.radius = 3.0;
+        sunLight.shadow.bias = -0.00014;
+        sunLight.shadow.normalBias = 0.018;
+        sunLight.shadow.radius = 2.2;
         sunLight.target.position.copy(built.sceneCenter);
         studioScene.add(sunLight);
         studioScene.add(sunLight.target);
 
-        // Luce Sky-Fill opposta con ombre morbide 1024px (simula luce diffusa cielo / GI negli angoli in ombra)
-        const skyFillBaseDir = new THREE.Vector3(
-          -sunInfo.dir.x * 0.85,
-          Math.max(0.65, sunInfo.dir.y + 0.35),
-          -sunInfo.dir.z * 0.85
-        ).normalize();
-        const skyFillLight = new THREE.DirectionalLight(
-          isEvening ? '#7da6de' : '#dceaff',
-          isEvening ? 0.32 : isStudio ? 0.58 : 0.48
+        // TRUE HEMISPHERICAL SKY GI LIGHT:
+        // Campionata su tutta la semisfera cielo Fibonacci (32-64 direzioni con ombre 1024px)
+        // Produce vera occlusione globale morbida da cupola cielo in ogni stanza e angolo senza alcun puntino!
+        const skyGiLight = new THREE.DirectionalLight(
+          moodCfg.skyGiColor,
+          moodCfg.skyGiIntensity
         );
-        skyFillLight.castShadow = true;
-        skyFillLight.shadow.mapSize.set(1024, 1024);
-        skyFillLight.shadow.camera.near = 1;
-        skyFillLight.shadow.camera.far = sunDist * 2.4;
-        skyFillLight.shadow.camera.left = -shadowHalf;
-        skyFillLight.shadow.camera.right = shadowHalf;
-        skyFillLight.shadow.camera.top = shadowHalf;
-        skyFillLight.shadow.camera.bottom = -shadowHalf;
-        skyFillLight.shadow.bias = -0.0003;
-        skyFillLight.shadow.normalBias = 0.03;
-        skyFillLight.shadow.radius = 4.0;
-        skyFillLight.target.position.copy(built.sceneCenter);
-        studioScene.add(skyFillLight);
-        studioScene.add(skyFillLight.target);
+        skyGiLight.castShadow = true;
+        skyGiLight.shadow.mapSize.set(1024, 1024);
+        skyGiLight.shadow.camera.near = 1;
+        skyGiLight.shadow.camera.far = sunDist * 2.5;
+        skyGiLight.shadow.camera.left = -shadowHalf;
+        skyGiLight.shadow.camera.right = shadowHalf;
+        skyGiLight.shadow.camera.top = shadowHalf;
+        skyGiLight.shadow.camera.bottom = -shadowHalf;
+        skyGiLight.shadow.bias = -0.00035;
+        skyGiLight.shadow.normalBias = 0.032;
+        skyGiLight.shadow.radius = 3.5;
+        skyGiLight.target.position.copy(built.sceneCenter);
+        studioScene.add(skyGiLight);
+        studioScene.add(skyGiLight.target);
 
-        // Luci calde interne automatiche al centro delle stanze (fondamentali in Prima Persona e Serale!)
+        // Luci calde interne reali al centro delle stanze (con ombre in Golden Hour / Sera / Prima Persona)
         const interiorLightsOn = project.renderSettings.interiorLights ?? true;
         if (interiorLightsOn && project.walls.length > 0) {
           const allRooms = detectRooms(project.walls, project.furniture);
@@ -742,22 +1037,22 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
           const targetRooms = activeRoom ? [activeRoom] : allRooms.slice(0, 6);
           const wallH = project.walls.reduce((m, w) => Math.max(m, w.height), 2.7);
           const showRoof = project.renderSettings.cameraMode === 'first_person';
-          const ptIntensity = isEvening ? 3.8 : showRoof ? 1.85 : isStudio ? 0.55 : 0.85;
+          const baseInterior = showRoof ? 1.65 : 0.85;
+          const ptIntensity = baseInterior * moodCfg.interiorLightMult;
 
           targetRooms.forEach((rm, idx) => {
             const pLight = new THREE.PointLight(
-              isEvening ? '#ffcf87' : '#fff2dc',
+              mood === 'evening' || mood === 'golden' ? '#ffcb80' : '#fff0d6',
               ptIntensity,
-              Math.max(5, Math.hypot(rm.bounds.width, rm.bounds.height) * 1.15),
-              1.8
+              Math.max(5.5, Math.hypot(rm.bounds.width, rm.bounds.height) * 1.25),
+              1.75
             );
             pLight.position.set(
               rm.bounds.centerX - cx,
-              Math.max(2.15, wallH - 0.25),
+              Math.max(2.1, wallH - 0.25),
               rm.bounds.centerY - cz
             );
-            // Attiva ombre morbide sui primi 2 lampadari principali in serale/prima persona
-            if ((isEvening || showRoof) && idx < 2) {
+            if ((mood === 'evening' || mood === 'golden' || showRoof) && idx < 2) {
               pLight.castShadow = true;
               pLight.shadow.mapSize.set(512, 512);
               pLight.shadow.bias = -0.0006;
@@ -769,8 +1064,8 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
               const lampGeo = new THREE.CylinderGeometry(0.2, 0.2, 0.035, 24);
               const lampMat = new THREE.MeshStandardMaterial({
                 color: '#fffdf8',
-                emissive: new THREE.Color('#ffe4b3'),
-                emissiveIntensity: isEvening ? 3.2 : 1.8,
+                emissive: new THREE.Color('#ffdfa8'),
+                emissiveIntensity: mood === 'evening' ? 3.5 : 1.9,
                 roughness: 0.2,
               });
               const lamp = new THREE.Mesh(lampGeo, lampMat);
@@ -793,7 +1088,7 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
         renderCam.updateMatrixWorld(true);
         const baseProjectionMatrix = renderCam.projectionMatrix.clone();
 
-        // 5. Calcola GTAO ad Alta Definizione una sola volta sulla geometria pulita (zero jitter)
+        // 5. Calcola GTAO ad Alta Definizione una sola volta sulla geometria pulita
         const gtaoPass = new ArchitecturalGTAOPass(
           studioScene,
           renderCam,
@@ -803,11 +1098,11 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
         );
         gtaoPass.output = ArchitecturalGTAOPass.OUTPUT.Off;
         gtaoPass.updateGtaoMaterial({
-          radius: 0.54,
+          radius: 0.52,
           distanceExponent: 1.55,
-          thickness: 0.92,
+          thickness: 0.9,
           distanceFallOff: 0.9,
-          scale: 1.2,
+          scale: 1.18,
           samples: qCfg.aoSamples,
         });
         gtaoPass.updatePdMaterial({
@@ -821,16 +1116,23 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
         });
         cleanupList.push(() => gtaoPass.dispose());
 
-        const dummyRT = new THREE.WebGLRenderTarget(16, 16, { type: THREE.HalfFloatType });
+        const glCtx = renderer.getContext();
+        const supportsHalfFloatRT = Boolean(
+          glCtx.getExtension('EXT_color_buffer_float') ||
+            glCtx.getExtension('EXT_color_buffer_half_float')
+        );
+        const rtType = supportsHalfFloatRT ? THREE.HalfFloatType : THREE.UnsignedByteType;
+
+        const dummyRT = new THREE.WebGLRenderTarget(16, 16, { type: rtType });
         cleanupList.push(() => dummyRT.dispose());
         gtaoPass.render(renderer, dummyRT, dummyRT, 0, false);
 
         // 6. Buffer HDR di accumulo + Pipeline Post-Processing Fotografico
-        const frameRT = new THREE.WebGLRenderTarget(outW, outH, { type: THREE.HalfFloatType });
-        const accumA = new THREE.WebGLRenderTarget(outW, outH, { type: THREE.HalfFloatType });
-        const accumB = new THREE.WebGLRenderTarget(outW, outH, { type: THREE.HalfFloatType });
-        const postHdrRT = new THREE.WebGLRenderTarget(outW, outH, { type: THREE.HalfFloatType });
-        const tonemappedRT = new THREE.WebGLRenderTarget(outW, outH, { type: THREE.HalfFloatType });
+        const frameRT = new THREE.WebGLRenderTarget(outW, outH, { type: rtType });
+        const accumA = new THREE.WebGLRenderTarget(outW, outH, { type: rtType });
+        const accumB = new THREE.WebGLRenderTarget(outW, outH, { type: rtType });
+        const postHdrRT = new THREE.WebGLRenderTarget(outW, outH, { type: rtType });
+        const tonemappedRT = new THREE.WebGLRenderTarget(outW, outH, { type: rtType });
         cleanupList.push(() => {
           frameRT.dispose();
           accumA.dispose();
@@ -846,8 +1148,8 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
         const bloomPass = new UnrealBloomPass(
           new THREE.Vector2(outW, outH),
           bloomStrengthRef.current,
-          presetFx.bloomRadius,
-          presetFx.bloomThreshold
+          0.58,
+          moodCfg.bloomThreshold
         );
         const outputPass = new OutputPass();
         const finishMat = new THREE.ShaderMaterial({
@@ -875,12 +1177,12 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
         let writeAccum = accumB;
         let currentSample = 0;
 
-        /** Applica AO + HDR Bloom + ACES Filmic + Grana/Nitidezza sul buffer accumulato (istantaneo!) */
+        /** Applica AO + HDR Bloom + AgX Filmic + Color Grading ArchViz + Grana (istantaneo!) */
         const renderPostProcess = () => {
           if (!renderer || currentSample === 0) return;
           const prevTone = renderer.toneMapping;
 
-          // Step A: Applica GTAO in spazio lineare HDR
+          // Step A: Applica GTAO multi-bounce in spazio lineare HDR
           renderer.toneMapping = THREE.NoToneMapping;
           aoCompMat.uniforms.tBeauty.value = readAccum.texture;
           aoCompMat.uniforms.tAo.value = gtaoPass.gtaoMap;
@@ -891,25 +1193,27 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
           // Step B: HDR UnrealBloom sugli highlight naturali
           if (bloomStrengthRef.current > 0.005) {
             bloomPass.strength = bloomStrengthRef.current;
-            bloomPass.threshold = isEvening ? 0.76 : preset === 'studio' ? 0.98 : 0.92;
-            bloomPass.radius = isEvening ? 0.64 : 0.55;
+            bloomPass.threshold = moodCfg.bloomThreshold;
+            bloomPass.radius = mood === 'evening' || mood === 'golden' ? 0.65 : 0.56;
             bloomPass.renderToScreen = false;
             bloomPass.render(renderer, postHdrRT, postHdrRT, 0, false);
           }
 
-          // Step C: ACES Filmic Tone Mapping + Esposizione + sRGB
-          renderer.toneMapping = THREE.ACESFilmicToneMapping;
+          // Step C: AgX Filmic Tone Mapping (resa naturale su legni, intonaci e luci solari calde)
+          renderer.toneMapping = THREE.AgXToneMapping;
           renderer.toneMappingExposure = exposureRef.current;
           outputPass.renderToScreen = false;
           outputPass.render(renderer, tonemappedRT, postHdrRT, 0, false);
 
-          // Step D: Finitura fotografica (Micro-nitidezza, Vignettatura morbida, Grana pellicola) -> schermo
+          // Step D: Finitura fotografica DSLR (Split-Tone, Clarity, Micro-CA bordi, Vignette, Grana 35mm)
           finishMat.uniforms.tDiffuse.value = tonemappedRT.texture;
           finishMat.uniforms.grainIntensity.value = grainStrengthRef.current;
-          finishMat.uniforms.vignetteIntensity.value = isEvening ? 0.2 : isStudio ? 0.08 : 0.14;
-          finishMat.uniforms.clarity.value = 0.16;
-          finishMat.uniforms.contrast.value = isEvening ? 1.05 : 1.04;
-          finishMat.uniforms.saturation.value = isEvening ? 1.06 : 1.04;
+          finishMat.uniforms.vignetteIntensity.value = moodCfg.vignette;
+          finishMat.uniforms.clarity.value = 0.18;
+          finishMat.uniforms.contrast.value = 1.07;
+          finishMat.uniforms.saturation.value = mood === 'nordic' ? 1.0 : 1.06;
+          finishMat.uniforms.splitTone.value = moodCfg.splitTone;
+          finishMat.uniforms.chromaticAberration.value = 0.00075;
           renderer.setRenderTarget(null);
           finishQuad.render(renderer);
 
@@ -918,16 +1222,12 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
 
         renderPostProcessRef.current = renderPostProcess;
 
-        // Base ortonormale per jitterare il sole e la luce sky-fill in un cono fisicamente morbido
-        const makeTangentBasis = (dir: THREE.Vector3) => {
-          const upRef = Math.abs(dir.y) > 0.92 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
-          const u = new THREE.Vector3().crossVectors(upRef, dir).normalize();
-          const v = new THREE.Vector3().crossVectors(dir, u).normalize();
-          return { u, v };
-        };
-        const sunBasis = makeTangentBasis(sunInfo.dir);
-        const fillBasis = makeTangentBasis(skyFillBaseDir);
+        // Base ortonormale per disco solare
+        const upRef = Math.abs(sunDir.y) > 0.92 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+        const sunU = new THREE.Vector3().crossVectors(upRef, sunDir).normalize();
+        const sunV = new THREE.Vector3().crossVectors(sunDir, sunU).normalize();
         const tmpDir = new THREE.Vector3();
+        const skyDir = new THREE.Vector3();
 
         setIsInitializing(false);
 
@@ -938,7 +1238,6 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
           if (isPausedRef.current) return;
 
           try {
-            // Elabora fino a 2 campioni per frame così il render completa in 1-4 secondi restando fluido
             const batchSize = qCfg.samples >= 64 ? 2 : 1;
             for (let b = 0; b < batchSize && currentSample < qCfg.samples; b++) {
               const sIdx = currentSample;
@@ -950,38 +1249,31 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
               renderCam.projectionMatrix.elements[8] += jx * 2.0;
               renderCam.projectionMatrix.elements[9] += jy * 2.0;
 
-              // 2. Jitter disco solare (~5° penombra fisica)
+              // 2. Disco solare Vogel per penombre fisiche realistiche
               const [du, dv] = vogelDisk(sIdx, qCfg.samples);
-              const sunSpread = isStudio ? 0.14 : 0.095;
               tmpDir
-                .copy(sunInfo.dir)
-                .addScaledVector(sunBasis.u, du * sunSpread)
-                .addScaledVector(sunBasis.v, dv * sunSpread)
+                .copy(sunDir)
+                .addScaledVector(sunU, du * moodCfg.sunSpread)
+                .addScaledVector(sunV, dv * moodCfg.sunSpread)
                 .normalize();
               sunLight.position.copy(built.sceneCenter).addScaledVector(tmpDir, sunDist);
 
-              // 3. Jitter luce cielo secondaria (cono ampio per ombre diffuse ultra-morbide)
-              const [fu, fv] = vogelDisk((sIdx * 7 + 3) % qCfg.samples, qCfg.samples);
-              tmpDir
-                .copy(skyFillBaseDir)
-                .addScaledVector(fillBasis.u, fu * 0.28)
-                .addScaledVector(fillBasis.v, fv * 0.28)
-                .normalize();
-              skyFillLight.position.copy(built.sceneCenter).addScaledVector(tmpDir, sunDist);
+              // 3. Semisfera Fibonacci completa per vero Sky Dome GI a 360° con ombre morbide
+              fibonacciHemisphereDir(sIdx, qCfg.samples, skyDir);
+              skyGiLight.position.copy(built.sceneCenter).addScaledVector(skyDir, sunDist);
 
               // 4. Render frame lineare HDR
               renderer.toneMapping = THREE.NoToneMapping;
               renderer.setRenderTarget(frameRT);
               renderer.render(studioScene, renderCam);
 
-              // 5. Media progressiva in ping-pong (zero rumore, zero puntini)
+              // 5. Accumulo progressivo in ping-pong
               accumMat.uniforms.tPrev.value = readAccum.texture;
               accumMat.uniforms.tCurr.value = frameRT.texture;
               accumMat.uniforms.weight.value = 1.0 / (sIdx + 1);
               renderer.setRenderTarget(writeAccum);
               accumQuad.render(renderer);
 
-              // Scambia ping-pong
               const tmp = readAccum;
               readAccum = writeAccum;
               writeAccum = tmp;
@@ -989,7 +1281,6 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
               currentSample += 1;
             }
 
-            // Mostra anteprima aggiornata con AO + Bloom + Grana
             renderPostProcess();
             setSamples(currentSample);
           } catch (loopErr) {
@@ -1044,19 +1335,17 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
     };
   }, [
     hasStarted,
+    mood,
     quality,
     sunStrength,
     sourceGroup,
     sourceCamera,
-    preset,
     project.renderSettings.timeOfDay,
     project.renderSettings.interiorLights,
     project.renderSettings.cameraMode,
     project.walls,
     project.furniture,
     selectedRoomId3D,
-    presetFx.bloomRadius,
-    presetFx.bloomThreshold,
     runToken,
   ]);
 
@@ -1097,20 +1386,20 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-5 py-3.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
+        <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-emerald-600 to-teal-600 text-white flex items-center justify-center shadow-xs">
               <Camera className="w-4 h-4" />
             </div>
             <div>
               <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                Render Fotografico HD (Studio Multi-Campione)
+                Render Fotografico HD (Motore ArchViz)
                 <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
-                  Zero Puntini • AO + Bloom + Grana
+                  Sky GI 360° • AgX Filmic • Zero Puntini
                 </span>
               </h2>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                Super-sampling sub-pixel SSAA, ombre d’area morbide, GTAO architettonico, HDR Bloom e grana fotografica regolabili live.
+                Cupola cielo GI a 360°, ombre solari 4K morbide, riflessi PBR, GTAO, Bloom HDR e color grading fotografico.
               </p>
             </div>
           </div>
@@ -1123,27 +1412,48 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
           </button>
         </div>
 
-        {/* Controlli Qualità + Post-FX Istantanei (AO / Bloom / Grana / Sole / Luminosità) */}
-        <div className="px-5 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] font-semibold text-slate-500 mr-1">Qualità:</span>
-            {(['fast', 'high', 'ultra'] as QualityPreset[]).map((q) => (
-              <button
-                key={q}
-                type="button"
-                onClick={() => setQuality(q)}
-                className={`px-2.5 py-1 rounded-lg border text-[11px] font-semibold transition-colors cursor-pointer ${
-                  quality === q
-                    ? 'bg-emerald-600 text-white border-emerald-600'
-                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-emerald-400'
-                }`}
-              >
-                {QUALITY_CONFIG[q].label}
-              </button>
-            ))}
+        {/* Barra Controlli: Atmosfera Fotografica + Qualità + Slider Live */}
+        <div className="px-5 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 space-y-2 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] font-semibold text-slate-500 mr-0.5">Luce:</span>
+              {(['archviz', 'golden', 'nordic', 'evening'] as PhotoMood[]).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => handleSelectMood(m)}
+                  title={PHOTO_MOODS[m].desc}
+                  className={`px-2.5 py-1 rounded-lg border text-[11px] font-semibold transition-colors cursor-pointer ${
+                    mood === m
+                      ? 'bg-amber-600 text-white border-amber-600'
+                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-amber-400'
+                  }`}
+                >
+                  {PHOTO_MOODS[m].label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] font-semibold text-slate-500 mr-0.5">Qualità:</span>
+              {(['fast', 'high', 'ultra'] as QualityPreset[]).map((q) => (
+                <button
+                  key={q}
+                  type="button"
+                  onClick={() => setQuality(q)}
+                  className={`px-2.5 py-1 rounded-lg border text-[11px] font-semibold transition-colors cursor-pointer ${
+                    quality === q
+                      ? 'bg-emerald-600 text-white border-emerald-600'
+                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-emerald-400'
+                  }`}
+                >
+                  {QUALITY_CONFIG[q].label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3.5">
+          <div className="flex flex-wrap items-center gap-4 pt-0.5">
             <label className="flex items-center gap-1.5 text-[11px] text-slate-600 dark:text-slate-300">
               <span>AO:</span>
               <input
@@ -1173,7 +1483,7 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
               <input
                 type="range"
                 min={0}
-                max={0.06}
+                max={0.05}
                 step={0.002}
                 value={grainStrength}
                 onChange={(e) => setGrainStrength(Number(e.target.value))}
@@ -1185,7 +1495,7 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
               <span>Sole:</span>
               <input
                 type="range"
-                min={0.5}
+                min={0.4}
                 max={1.8}
                 step={0.1}
                 value={sunStrength}
@@ -1194,12 +1504,12 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
               />
             </label>
             <label className="flex items-center gap-1.5 text-[11px] text-slate-600 dark:text-slate-300">
-              <span>Luce:</span>
+              <span>Esposizione:</span>
               <input
                 type="range"
                 min={0.75}
-                max={1.45}
-                step={0.05}
+                max={1.4}
+                step={0.02}
                 value={exposure}
                 onChange={(e) => setExposure(Number(e.target.value))}
                 className="w-16 accent-emerald-600"
@@ -1209,30 +1519,54 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
           </div>
         </div>
 
-        {/* Viewport Render Studio HD */}
+        {/* Viewport Render ArchViz HD */}
         <div className="flex-1 min-h-[380px] bg-slate-950 relative flex items-center justify-center overflow-hidden p-3">
           <div
             ref={canvasHostRef}
-            className="w-full h-full min-h-[380px] max-h-[65vh] flex items-center justify-center"
+            className="w-full h-full min-h-[380px] max-h-[64vh] flex items-center justify-center"
           />
 
           {!hasStarted && (
             <div className="absolute inset-0 bg-slate-950/92 flex items-center justify-center p-6">
-              <div className="w-full max-w-lg rounded-2xl bg-slate-900 border border-slate-800 p-6 text-center space-y-5 shadow-2xl">
+              <div className="w-full max-w-xl rounded-2xl bg-slate-900 border border-slate-800 p-6 text-center space-y-5 shadow-2xl">
                 <div className="space-y-1.5">
                   <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center mx-auto shadow-md">
                     <Camera className="w-5 h-5" />
                   </div>
                   <h3 className="text-base font-bold text-white">
-                    Scegli la risoluzione del Render Fotografico
+                    Scegli atmosfera e risoluzione del Render Fotografico
                   </h3>
                   <p className="text-xs text-slate-400">
-                    Motore Studio progressivo <strong>senza puntini</strong>: ombre d’area morbide,{' '}
-                    <strong>GTAO</strong> negli angoli, <strong>Bloom HDR</strong> e{' '}
-                    <strong>grana fotografica</strong> regolabili live.
+                    Calcola <strong>Sky Dome GI a 360°</strong>, ombre solari 4K morbide, riflessi PBR,{' '}
+                    <strong>AgX Filmic</strong>, <strong>GTAO</strong>, <strong>Bloom</strong> e <strong>grana 35mm</strong> — zero puntini.
                   </p>
                 </div>
 
+                {/* Scelta Atmosfera rapida */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-left">
+                  {(['archviz', 'golden', 'nordic', 'evening'] as PhotoMood[]).map((m) => {
+                    const active = mood === m;
+                    return (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => handleSelectMood(m)}
+                        className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
+                          active
+                            ? 'bg-amber-500/20 border-amber-400 ring-1 ring-amber-400 text-white'
+                            : 'bg-slate-800/70 border-slate-700 text-slate-300 hover:border-slate-500'
+                        }`}
+                      >
+                        <div className="text-[11px] font-bold">{PHOTO_MOODS[m].label}</div>
+                        <div className="text-[10px] text-slate-400 mt-0.5 leading-tight">
+                          {PHOTO_MOODS[m].desc}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Scelta Qualità */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-left">
                   {(['fast', 'high', 'ultra'] as QualityPreset[]).map((id) => {
                     const opt = QUALITY_CONFIG[id];
@@ -1252,7 +1586,7 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
                           {id === 'fast' ? 'Veloce' : id === 'high' ? 'Alta Qualità' : 'Ultra HD 2K'}
                         </div>
                         <div className="text-[11px] font-mono text-emerald-300 mt-0.5">
-                          {opt.samples}× SSAA • {opt.maxWidth}px
+                          {opt.samples}× GI+SSAA • {opt.maxWidth}px
                         </div>
                         <div className="text-[10px] text-slate-400 mt-1 leading-tight">
                           {opt.timeHint}
@@ -1272,7 +1606,7 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
                   className="w-full py-3 px-5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-sm font-bold flex items-center justify-center gap-2 shadow-lg cursor-pointer transition-all"
                 >
                   <Play className="w-4 h-4 fill-current" />
-                  Avvia Render Fotografico ({QUALITY_CONFIG[quality].label})
+                  Avvia Render Fotografico ({PHOTO_MOODS[mood].label} • {QUALITY_CONFIG[quality].label})
                 </button>
               </div>
             </div>
@@ -1282,7 +1616,7 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
             <div className="absolute inset-0 bg-slate-950/75 flex flex-col items-center justify-center gap-2.5 text-white text-xs">
               <Loader2 className="w-8 h-8 animate-spin text-emerald-400" />
               <span className="font-semibold">
-                Preparazione luci Studio, riflessi HDR e Ambient Occlusion (GTAO)...
+                Generazione HDRI cielo, materiali PBR e GTAO ad alta definizione...
               </span>
             </div>
           )}
@@ -1308,22 +1642,16 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
             </div>
           )}
 
-          {hasStarted && !isInitializing && !errorMsg && (
-            <div className="absolute bottom-4 left-4 right-4 max-w-md mx-auto bg-slate-900/88 backdrop-blur border border-slate-700/80 rounded-xl px-3.5 py-2 text-white text-[11px] shadow-lg space-y-1.5">
+          {hasStarted && !isInitializing && !errorMsg && !isDone && (
+            <div className="absolute bottom-4 left-4 right-4 max-w-md mx-auto bg-slate-900/88 backdrop-blur border border-slate-700/80 rounded-xl px-3.5 py-2 text-white text-[11px] shadow-lg space-y-1.5 pointer-events-none">
               <div className="flex items-center justify-between">
                 <span className="font-semibold flex items-center gap-1.5">
-                  {isDone ? (
-                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                  ) : isPaused ? (
+                  {isPaused ? (
                     <span className="w-2 h-2 rounded-full bg-amber-400" />
                   ) : (
                     <Loader2 className="w-3 h-3 animate-spin text-emerald-400" />
                   )}
-                  {isDone
-                    ? 'Render Fotografico completato! Regola AO / Bloom / Grana live.'
-                    : isPaused
-                      ? 'In pausa'
-                      : 'Accumulo ombre morbide, SSAA e Post-FX...'}
+                  {isPaused ? 'In pausa' : 'Calcolo Sky GI 360°, ombre 4K e AgX...'}
                 </span>
                 <span className="font-mono text-emerald-300 font-bold">
                   {samples} / {targetSamples} ({progressPct}%)
@@ -1335,6 +1663,13 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
                   style={{ width: `${progressPct}%` }}
                 />
               </div>
+            </div>
+          )}
+
+          {hasStarted && isDone && !errorMsg && (
+            <div className="absolute top-3 right-3 bg-slate-900/80 backdrop-blur border border-emerald-500/40 rounded-lg px-2.5 py-1 text-emerald-300 text-[10px] font-semibold flex items-center gap-1.5 shadow pointer-events-none">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              Pronto ({PHOTO_MOODS[mood].label} • {QUALITY_CONFIG[quality].samples}× GI)
             </div>
           )}
         </div>
@@ -1389,7 +1724,7 @@ export const PathTracerRenderModal: React.FC<PathTracerRenderModalProps> = ({
                 disabled={!hasStarted || isInitializing || samples < 1}
                 onClick={handleSendToAi}
                 className="px-3.5 py-2 rounded-xl border border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/40 hover:bg-violet-100 text-violet-700 dark:text-violet-300 disabled:opacity-40 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-                title="Opzionale: usa questo render HD come base ultra-fedele per la Foto AI"
+                title="Opzionale: usa questo render ArchViz come base ultra-fedele per la Foto AI fotorealistica"
               >
                 <Sparkles className="w-3.5 h-3.5" />
                 Rifinisci con AI
