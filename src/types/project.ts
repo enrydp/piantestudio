@@ -241,6 +241,12 @@ export interface RenderSettings {
   interiorLights?: boolean;
   /** Battiscopa architettonico lungo le pareti */
   showBaseboards?: boolean;
+  /** Ambient Occlusion in tempo reale (GTAO negli angoli e sotto i mobili) */
+  enableAO?: boolean;
+  /** Bloom / aloni luce HDR su finestre, riflessi e plafoniere */
+  enableBloom?: boolean;
+  /** Grana fotografica sottile e finitura filmica */
+  enableFilmGrain?: boolean;
 }
 
 /** Strumenti attivi nell'editor 2D */

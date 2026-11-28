@@ -62,6 +62,9 @@ export const DEFAULT_RENDER_SETTINGS: RenderSettings = {
   renderPreset: 'realistic',
   interiorLights: true,
   showBaseboards: true,
+  enableAO: true,
+  enableBloom: true,
+  enableFilmGrain: true,
 };
 
 export function createEmptyProject(): ProjectData {

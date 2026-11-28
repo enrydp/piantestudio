@@ -1549,6 +1549,51 @@ export const RightPropertiesPanel: React.FC<RightPropertiesPanelProps> = ({
                     className="accent-blue-600 rounded"
                   />
                 </label>
+
+                <div className="pt-1.5 mt-1 border-t border-slate-200/70 dark:border-slate-800 space-y-1.5">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                    Effetti Tempo Reale (Post-FX)
+                  </div>
+                  <label className="flex items-center justify-between cursor-pointer">
+                    <span className="text-[11px] text-slate-600 dark:text-slate-300">
+                      Ambient Occlusion (AO angoli)
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={project.renderSettings.enableAO ?? true}
+                      onChange={(e) =>
+                        updateRenderSettings({ enableAO: e.target.checked })
+                      }
+                      className="accent-blue-600 rounded"
+                    />
+                  </label>
+                  <label className="flex items-center justify-between cursor-pointer">
+                    <span className="text-[11px] text-slate-600 dark:text-slate-300">
+                      Bloom (aloni luce morbida)
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={project.renderSettings.enableBloom ?? true}
+                      onChange={(e) =>
+                        updateRenderSettings({ enableBloom: e.target.checked })
+                      }
+                      className="accent-blue-600 rounded"
+                    />
+                  </label>
+                  <label className="flex items-center justify-between cursor-pointer">
+                    <span className="text-[11px] text-slate-600 dark:text-slate-300">
+                      Grana fotografica + nitidezza
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={project.renderSettings.enableFilmGrain ?? true}
+                      onChange={(e) =>
+                        updateRenderSettings({ enableFilmGrain: e.target.checked })
+                      }
+                      className="accent-blue-600 rounded"
+                    />
+                  </label>
+                </div>
               </div>
             </section>
 
@@ -1773,10 +1818,10 @@ export const RightPropertiesPanel: React.FC<RightPropertiesPanelProps> = ({
                 type="button"
                 onClick={onOpenPathTracerModal}
                 className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-semibold flex items-center justify-center gap-2 shadow-sm cursor-pointer"
-                title="Calcola luce globale reale e ombre morbide direttamente sulla GPU (100% locale e online, zero AI)"
+                title="Render Studio multi-campione senza puntini: ombre morbide, GTAO, Bloom HDR e grana fotografica"
               >
                 <Camera className="w-4 h-4" />
-                Render Fotografico HD (Ray-Tracing)
+                Render Fotografico HD (Studio)
               </button>
               <button
                 type="button"

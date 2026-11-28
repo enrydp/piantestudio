@@ -16,6 +16,11 @@ import React, {
 import * as THREE from 'three';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { ContactShadows, Environment, Grid, Lightformer, OrbitControls, Sky } from '@react-three/drei';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { useProjectStore } from '../store/useProjectStore';
 import { getWallsBounds } from '../utils/geometry';
@@ -24,6 +29,11 @@ import { captureHighResPng, exportSceneToGlb } from '../utils/export3d';
 import { RoomMesh3D } from './RoomMesh3D';
 import { FurnitureMesh3D } from './FurnitureMesh3D';
 import { SceneStylizer, stripStylizedOutlinesForExport } from './SceneStylizer';
+import {
+  ArchitecturalGTAOPass,
+  PhotographicFinishShader,
+  getPostProcessPresetConfig,
+} from './postProcessing';
 import type { CameraMode3D, RenderStylePreset } from '../types/project';
 
 export interface Scene3DHandle {
@@ -217,6 +227,179 @@ const ToneMappingSync: React.FC<{ exposure: number }> = ({ exposure }) => {
   return null;
 };
 
+/**
+ * Pipeline di Post-Processing in tempo reale (GTAO Ambient Occlusion + HDR UnrealBloom + Grana Fotografica):
+ * - Usa EffectComposer con render target HalfFloat MSAA 4x su WebGL2 per bordi nitidi
+ * - Parametri calibrati automaticamente per ciascuno stile (Realistico, Studio, Serale, Cartoon, Schizzo)
+ * - Espone renderNow(pixelRatio?) per esportare PNG / anteprima AI con gli effetti attivi
+ */
+const PostProcessingPipeline: React.FC<{
+  preset: RenderStylePreset;
+  enableAO: boolean;
+  enableBloom: boolean;
+  enableFilmGrain: boolean;
+  onBindRender: (fn: ((pixelRatio?: number) => void) | null) => void;
+}> = ({ preset, enableAO, enableBloom, enableFilmGrain, onBindRender }) => {
+  const { gl, scene, camera, size } = useThree();
+  const composerRef = useRef<EffectComposer | null>(null);
+  const gtaoPassRef = useRef<ArchitecturalGTAOPass | null>(null);
+  const bloomPassRef = useRef<UnrealBloomPass | null>(null);
+  const finishPassRef = useRef<ShaderPass | null>(null);
+  const sizeRef = useRef(size);
+  sizeRef.current = size;
+
+  // Inizializza EffectComposer e i 5 pass una sola volta per renderer/scene/camera
+  useEffect(() => {
+    const dpr = gl.getPixelRatio();
+    const effW = Math.max(1, Math.round(sizeRef.current.width * dpr));
+    const effH = Math.max(1, Math.round(sizeRef.current.height * dpr));
+
+    const rt = new THREE.WebGLRenderTarget(effW, effH, {
+      type: THREE.HalfFloatType,
+      samples: gl.capabilities.isWebGL2 ? 4 : 0,
+    });
+    const composer = new EffectComposer(gl, rt);
+    composer.setPixelRatio(dpr);
+    composer.setSize(sizeRef.current.width, sizeRef.current.height);
+
+    const renderPass = new RenderPass(scene, camera);
+    const gtaoPass = new ArchitecturalGTAOPass(scene, camera, effW, effH, 1024);
+    gtaoPass.output = ArchitecturalGTAOPass.OUTPUT.Default;
+    gtaoPass.updateGtaoMaterial({
+      radius: 0.48,
+      distanceExponent: 1.6,
+      thickness: 0.9,
+      distanceFallOff: 0.9,
+      scale: 1.15,
+      samples: 16,
+    });
+    gtaoPass.updatePdMaterial({
+      lumaPhi: 8,
+      depthPhi: 2,
+      normalPhi: 3,
+      radius: 6,
+      radiusExponent: 2,
+      rings: 2,
+      samples: 16,
+    });
+
+    const bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(effW, effH),
+      0.2,
+      0.55,
+      0.94
+    );
+    const outputPass = new OutputPass();
+    const finishPass = new ShaderPass(PhotographicFinishShader);
+    finishPass.uniforms.resolution.value.set(effW, effH);
+    finishPass.uniforms.time.value = 1.0;
+
+    composer.addPass(renderPass);
+    composer.addPass(gtaoPass);
+    composer.addPass(bloomPass);
+    composer.addPass(outputPass);
+    composer.addPass(finishPass);
+
+    composerRef.current = composer;
+    gtaoPassRef.current = gtaoPass;
+    bloomPassRef.current = bloomPass;
+    finishPassRef.current = finishPass;
+
+    onBindRender((pixelRatio?: number) => {
+      if (pixelRatio !== undefined) {
+        composer.setPixelRatio(pixelRatio);
+        finishPass.uniforms.resolution.value.set(
+          Math.max(1, Math.round(sizeRef.current.width * pixelRatio)),
+          Math.max(1, Math.round(sizeRef.current.height * pixelRatio))
+        );
+      }
+      composer.render();
+    });
+
+    return () => {
+      onBindRender(null);
+      composerRef.current = null;
+      gtaoPassRef.current = null;
+      bloomPassRef.current = null;
+      finishPassRef.current = null;
+      try {
+        gtaoPass.dispose();
+        bloomPass.dispose();
+        outputPass.dispose();
+        finishPass.dispose();
+        composer.dispose();
+        rt.dispose();
+      } catch {
+        // ignore
+      }
+    };
+  }, [gl, scene, camera, onBindRender]);
+
+  // Aggiorna dimensioni quando cambia la finestra o il pannello
+  useEffect(() => {
+    const composer = composerRef.current;
+    const finishPass = finishPassRef.current;
+    if (!composer) return;
+    const dpr = gl.getPixelRatio();
+    composer.setPixelRatio(dpr);
+    composer.setSize(size.width, size.height);
+    if (finishPass) {
+      finishPass.uniforms.resolution.value.set(
+        Math.max(1, Math.round(size.width * dpr)),
+        Math.max(1, Math.round(size.height * dpr))
+      );
+    }
+  }, [gl, size.width, size.height]);
+
+  // Aggiorna parametri AO, Bloom e Grana live al cambio preset o checkbox
+  useEffect(() => {
+    const cfg = getPostProcessPresetConfig(preset);
+    const gtaoPass = gtaoPassRef.current;
+    const bloomPass = bloomPassRef.current;
+    const finishPass = finishPassRef.current;
+
+    if (gtaoPass) {
+      gtaoPass.enabled = enableAO && cfg.aoEnabled;
+      gtaoPass.blendIntensity = cfg.aoIntensity;
+      gtaoPass.updateGtaoMaterial({
+        radius: cfg.aoRadius,
+        scale: cfg.aoScale,
+      });
+    }
+
+    if (bloomPass) {
+      bloomPass.enabled = enableBloom && cfg.bloomEnabled && cfg.bloomStrength > 0.001;
+      bloomPass.strength = cfg.bloomStrength;
+      bloomPass.threshold = cfg.bloomThreshold;
+      bloomPass.radius = cfg.bloomRadius;
+    }
+
+    if (finishPass) {
+      const grainVal = enableFilmGrain ? cfg.grainIntensity : 0.0;
+      const clarityVal = enableFilmGrain ? cfg.clarity : 0.0;
+      const vigVal = enableFilmGrain ? cfg.vignetteIntensity : 0.0;
+      finishPass.uniforms.grainIntensity.value = grainVal;
+      finishPass.uniforms.clarity.value = clarityVal;
+      finishPass.uniforms.vignetteIntensity.value = vigVal;
+      finishPass.uniforms.contrast.value = enableFilmGrain ? cfg.contrast : 1.0;
+      finishPass.uniforms.saturation.value = enableFilmGrain ? cfg.saturation : 1.0;
+      finishPass.enabled = enableFilmGrain;
+    }
+  }, [preset, enableAO, enableBloom, enableFilmGrain]);
+
+  // Prende il controllo del render loop (priority = 1) dopo ContactShadows / Environment / OrbitControls
+  useFrame(() => {
+    const composer = composerRef.current;
+    if (composer) {
+      composer.render();
+    } else {
+      gl.render(scene, camera);
+    }
+  }, 1);
+
+  return null;
+};
+
 /** Environment map procedurale architettonica ad alto contrasto (riflessi naturali su vetri, metalli, marmo e parquet) */
 const SceneEnvironment: React.FC<{ preset: RenderStylePreset }> = React.memo(({ preset }) => {
   const isEvening = preset === 'evening';
@@ -282,6 +465,7 @@ const SceneContent: React.FC<{
     gl: THREE.WebGLRenderer;
     scene: THREE.Scene;
     camera: THREE.Camera;
+    renderWithPostFx: (pixelRatio?: number) => void;
   }) => void;
 }> = ({ activeRoom, detectedRooms, exportGroupRef, onBindThree }) => {
   const { gl, scene, camera } = useThree();
@@ -290,9 +474,28 @@ const SceneContent: React.FC<{
   const preset: RenderStylePreset = renderSettings.renderPreset ?? 'realistic';
   const interiorLightsOn = renderSettings.interiorLights ?? true;
   const showBaseboards = renderSettings.showBaseboards ?? true;
+  const enableAO = renderSettings.enableAO ?? true;
+  const enableBloom = renderSettings.enableBloom ?? true;
+  const enableFilmGrain = renderSettings.enableFilmGrain ?? true;
+  const postFxRenderRef = useRef<((pixelRatio?: number) => void) | null>(null);
+
+  const handleBindPostFx = useCallback((fn: ((pixelRatio?: number) => void) | null) => {
+    postFxRenderRef.current = fn;
+  }, []);
 
   useEffect(() => {
-    onBindThree({ gl, scene, camera });
+    onBindThree({
+      gl,
+      scene,
+      camera,
+      renderWithPostFx: (pixelRatio?: number) => {
+        if (postFxRenderRef.current) {
+          postFxRenderRef.current(pixelRatio);
+        } else {
+          gl.render(scene, camera);
+        }
+      },
+    });
   }, [gl, scene, camera, onBindThree]);
 
   const allBounds = useMemo(() => getWallsBounds(walls), [walls]);
@@ -472,7 +675,8 @@ const SceneContent: React.FC<{
               <meshStandardMaterial
                 color="#fffdf8"
                 emissive="#ffe7bd"
-                emissiveIntensity={preset === 'evening' ? 2.2 : 1.1}
+                emissiveIntensity={preset === 'evening' ? 2.8 : 1.65}
+                toneMapped={false}
                 roughness={0.2}
               />
             </mesh>
@@ -553,6 +757,14 @@ const SceneContent: React.FC<{
         sceneRadius={visibleData.sceneRadius}
         focusKey={activeRoom ? activeRoom.id : 'all'}
       />
+
+      <PostProcessingPipeline
+        preset={preset}
+        enableAO={enableAO}
+        enableBloom={enableBloom}
+        enableFilmGrain={enableFilmGrain}
+        onBindRender={handleBindPostFx}
+      />
     </>
   );
 };
@@ -568,6 +780,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(({ paused = false
     gl: THREE.WebGLRenderer;
     scene: THREE.Scene;
     camera: THREE.Camera;
+    renderWithPostFx: (pixelRatio?: number) => void;
   } | null>(null);
 
   const detectedRooms = useMemo(
@@ -588,7 +801,13 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(({ paused = false
       const roomSuffix = activeRoom
         ? `-${activeRoom.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
         : '';
-      captureHighResPng(ctx.gl, ctx.scene, ctx.camera, `${safeName}${roomSuffix}-render-3d.png`);
+      captureHighResPng(
+        ctx.gl,
+        ctx.scene,
+        ctx.camera,
+        `${safeName}${roomSuffix}-render-3d.png`,
+        ctx.renderWithPostFx
+      );
       showToast('Immagine PNG ad alta risoluzione salvata!', 'success');
     },
     exportGlb: async () => {
@@ -608,7 +827,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(({ paused = false
     captureDataUrl: () => {
       const ctx = threeCtxRef.current;
       if (!ctx) return null;
-      ctx.gl.render(ctx.scene, ctx.camera);
+      ctx.renderWithPostFx();
       return ctx.gl.domElement.toDataURL('image/png', 1.0);
     },
     getPathTracerSource: () => {
@@ -619,7 +838,12 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(({ paused = false
   }));
 
   const handleBindThree = useCallback(
-    (ctx: { gl: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.Camera }) => {
+    (ctx: {
+      gl: THREE.WebGLRenderer;
+      scene: THREE.Scene;
+      camera: THREE.Camera;
+      renderWithPostFx: (pixelRatio?: number) => void;
+    }) => {
       threeCtxRef.current = ctx;
     },
     []
@@ -636,7 +860,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(({ paused = false
     <div className="relative w-full h-full bg-slate-200 dark:bg-slate-950 select-none">
       <Canvas
         frameloop={paused ? 'never' : 'always'}
-        shadows
+        shadows="soft"
         dpr={[1, 2]}
         camera={{ fov: 44, near: 0.08, far: 160, position: [8, 9, 8] }}
         gl={{

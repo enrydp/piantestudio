@@ -40,21 +40,31 @@ export function exportSceneToGlb(object: THREE.Object3D, fileName: string): Prom
   });
 }
 
-/** Cattura il canvas WebGL ad alta risoluzione e scarica un file PNG */
+/** Cattura il canvas WebGL ad alta risoluzione (incluso Post-FX AO/Bloom/Grana) e scarica un file PNG */
 export function captureHighResPng(
   gl: THREE.WebGLRenderer,
   scene: THREE.Scene,
   camera: THREE.Camera,
-  fileName: string
+  fileName: string,
+  renderWithPostFx?: (pixelRatio: number) => void
 ): void {
   const prevPixelRatio = gl.getPixelRatio();
+  const hiDpr = Math.max(2, prevPixelRatio);
   // Forza densità pixel 2x per export nitido ad alta risoluzione
-  gl.setPixelRatio(Math.max(2, prevPixelRatio));
-  gl.render(scene, camera);
+  gl.setPixelRatio(hiDpr);
+  if (renderWithPostFx) {
+    renderWithPostFx(hiDpr);
+  } else {
+    gl.render(scene, camera);
+  }
 
   const dataUrl = gl.domElement.toDataURL('image/png', 1.0);
   gl.setPixelRatio(prevPixelRatio);
-  gl.render(scene, camera);
+  if (renderWithPostFx) {
+    renderWithPostFx(prevPixelRatio);
+  } else {
+    gl.render(scene, camera);
+  }
 
   const a = document.createElement('a');
   a.href = dataUrl;
